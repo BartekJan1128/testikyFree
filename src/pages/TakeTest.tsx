@@ -99,6 +99,10 @@ export default function TakeTest() {
     if (progress) saveProgress(storageKey, progress)
   }, [progress, storageKey])
 
+  useEffect(() => {
+    document.querySelector('[data-current]')?.scrollIntoView({ block: 'nearest' })
+  }, [progress?.idx])
+
   const byId = useMemo(() => new Map(test?.questions.map((q) => [q.id, q]) ?? []), [test])
   const total = progress?.order.length ?? 0
   const q = progress ? byId.get(progress.order[progress.idx]) : undefined
@@ -297,13 +301,14 @@ export default function TakeTest() {
             <h3 className="font-semibold">Přehled</h3>
             <span className="text-sm text-muted-foreground tabular-nums">{answeredCount} / {total}</span>
           </div>
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(36px,1fr))] gap-1.5">
+          <div className="-mr-2 grid max-h-[calc(100vh-250px)] min-h-40 grid-cols-[repeat(auto-fill,minmax(36px,1fr))] gap-1.5 overflow-y-auto py-1 pr-2 pl-1">
             {progress.order.map((qid, i) => {
               const answered = isAnswered(qid)
               const current = i === progress.idx
               return (
                 <button
                   key={qid}
+                  data-current={current || undefined}
                   onClick={() => go(i)}
                   title={`Otázka ${i + 1}, ID ${qid}`}
                   className={cn(
