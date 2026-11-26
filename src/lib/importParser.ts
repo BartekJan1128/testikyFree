@@ -174,7 +174,9 @@ export function parseCsv(input: string): ParseResult {
   const cell = (r: string[], i: number) => (i >= 0 ? String(r[i] ?? '').trim() : '')
   const questions: ImportQuestion[] = []
 
-  if (ai >= 0) {
+  // víc sloupců typu answer / answer1 / odpoved2 … = formát "řádek = otázka"
+  const answerLike = header.filter((h) => /^(answer|odpoved)\d*$/.test(h)).length
+  if (ai >= 0 && answerLike < 2) {
     let current: ImportQuestion | null = null
     rows.slice(1).forEach((r, idx) => {
       const qText = cell(r, qi)

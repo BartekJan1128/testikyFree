@@ -222,18 +222,24 @@ export default function ImportPanel({
 
         <ErrorAlert error={error} />
 
-        <div className="flex flex-wrap items-center gap-4 rounded-xl border bg-card px-5 py-4">
+      </div>
+
+      <aside className="divide-y rounded-xl border bg-card lg:sticky lg:top-[76px]">
+        <div className="space-y-4 p-5">
           {existingCount > 0 ? (
-            <div className="flex items-center gap-3">
-              <Switch id="replace" checked={replace} onCheckedChange={setReplace} />
-              <Label htmlFor="replace" className="font-normal">
-                Nahradit současných {existingCount} otázek
+            <div className="flex items-start gap-3">
+              <Switch id="replace" checked={replace} onCheckedChange={setReplace} className="mt-0.5" />
+              <Label htmlFor="replace" className="flex flex-col items-start gap-0.5 font-normal">
+                <span className="font-medium">Nahradit současné otázky</span>
+                <span className="text-xs text-muted-foreground">
+                  {replace ? `Všech ${existingCount} otázek se smaže a nahradí importem.` : `Nové se přidají za ${existingCount} stávajících.`}
+                </span>
               </Label>
             </div>
           ) : (
-            <span className="text-sm text-muted-foreground">Test je zatím prázdný.</span>
+            <p className="text-sm text-muted-foreground">Test je zatím prázdný.</p>
           )}
-          <div className="ml-auto">
+          <div className="[&>button]:w-full">
             {replace && existingCount > 0 ? (
               <Confirm
                 trigger={importBtn}
@@ -247,10 +253,10 @@ export default function ImportPanel({
               importBtn
             )}
           </div>
+          {!result && <p className="text-xs text-muted-foreground">Nejdřív nahraj soubor nebo vlož obsah.</p>}
         </div>
-      </div>
 
-      <aside className="rounded-xl border bg-card p-5 lg:sticky lg:top-[76px]">
+        <div className="p-5">
         <h3 className="font-semibold">Formát souboru</h3>
         <p className="mt-1 text-sm text-muted-foreground">
           Otázka může mít víc správných odpovědí. CSV může mít oddělovač středník, čárku i tabulátor.
@@ -273,6 +279,7 @@ export default function ImportPanel({
             </TabsContent>
           ))}
         </Tabs>
+        </div>
       </aside>
     </div>
   )
