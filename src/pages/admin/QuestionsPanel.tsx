@@ -1,12 +1,13 @@
 import { useMemo, useState, type Dispatch, type SetStateAction } from 'react'
-import { Check, FileUp, Lightbulb, ListPlus, Loader2, Pencil, Plus, SearchX, Trash2, TriangleAlert, X } from 'lucide-react'
+import { ArrowRight, Check, FileUp, Lightbulb, ListPlus, Loader2, Pencil, Plus, SearchX, Trash2, TriangleAlert, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { supabase } from '@/lib/supabase'
-import type { Answer, Question } from '@/lib/types'
+import type { Answer, Question, QuestionType } from '@/lib/types'
 import { errMsg } from '@/lib/format'
 import { isIdQuery, makeQuestionMatcher } from '@/lib/search'
 import { cn } from '@/lib/utils'
 import { Confirm, EmptyState, ErrorAlert, QuestionId, SearchField } from '@/components/common'
+import { RichText } from '@/components/RichText'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
@@ -22,10 +23,11 @@ type Props = {
   setQuestions: Dispatch<SetStateAction<Question[] | null>>
   onImport: () => void
 }
-type Filter = 'all' | 'nocorrect' | 'multi'
+type Filter = 'all' | 'nocorrect' | 'multi' | 'match'
 
 const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
 const correctCount = (q: Question) => q.answers.filter((a) => a.is_correct).length
+const isBroken = (q: Question) => (q.type === 'match' ? q.answers.filter((a) => a.text && a.match_text).length === 0 : correctCount(q) === 0)
 
 export default function QuestionsPanel({ testId, questions, setQuestions, onImport }: Props) {
   const [query, setQuery] = useState('')
@@ -33,15 +35,17 @@ export default function QuestionsPanel({ testId, questions, setQuestions, onImpo
   const [adding, setAdding] = useState(false)
 
   const matcher = useMemo(() => makeQuestionMatcher(query), [query])
-  const noCorrect = questions.filter((q) => correctCount(q) === 0).length
-  const multi = questions.filter((q) => correctCount(q) > 1).length
+  const broken = questions.filter(isBroken).length
+  const multi = questions.filter((q) => q.type === 'choice' && correctCount(q) > 1).length
+  const matchCount = questions.filter((q) => q.type === 'match').length
 
   const visible = questions
     .map((q, i) => ({ q, num: i + 1 }))
     .filter(({ q }) => {
-      if (filter === 'nocorrect' && correctCount(q) > 0) return false
-      if (filter === 'multi' && correctCount(q) < 2) return false
-      return matcher(q.id, q.text, q.explanation, ...q.answers.map((a) => a.text))
+      if (filter === 'nocorrect' && !isBroken(q)) return false
+      if (filter === 'multi' && (q.type !== 'choice' || correctCount(q) < 2)) return false
+      if (filter === 'match' && q.type !== 'match') return false
+      return matcher(q.id, q.text, q.explanation, ...q.answers.map((a) => `${a.text} ${a.match_text ?? ''}`))
     })
 
   const replace = (q: Question) => setQuestions((list) => list && list.map((x) => (x.id === q.id ? q : x)))
@@ -70,16 +74,17 @@ export default function QuestionsPanel({ testId, questions, setQuestions, onImpo
         <ToggleGroup type="single" variant="outline" value={filter} onValueChange={(v) => v && setFilter(v as Filter)}>
           <ToggleGroupItem value="all" className="px-3">Všechny</ToggleGroupItem>
           <ToggleGroupItem value="multi" className="px-3">Víc správných {multi}</ToggleGroupItem>
-          <ToggleGroupItem value="nocorrect" className="px-3">Bez správné {noCorrect}</ToggleGroupItem>
+          <ToggleGroupItem value="match" className="px-3">Přiřazování {matchCount}</ToggleGroupItem>
+          <ToggleGroupItem value="nocorrect" className="px-3">Bez správné {broken}</ToggleGroupItem>
         </ToggleGroup>
         <Button onClick={() => setAdding(true)} disabled={adding}><Plus /> Otázka</Button>
       </div>
 
-      {noCorrect > 0 && filter !== 'nocorrect' && (
+      {broken > 0 && filter !== 'nocorrect' && (
         <Alert className="border-warning/40 bg-warning-soft text-warning">
           <TriangleAlert />
           <AlertDescription className="text-warning">
-            {noCorrect === 1 ? '1 otázka nemá' : `${noCorrect} otázek nemá`} označenou správnou odpověď a vždy se započítá jako chyba.
+            {broken === 1 ? '1 otázka nemá' : `${broken} otázek nemá`} nastavenou správnou odpověď a vždy se započítá jako chyba.
           </AlertDescription>
           <AlertAction>
             <Button size="sm" variant="outline" onClick={() => setFilter('nocorrect')}>Ukázat</Button>
@@ -124,9 +129,11 @@ export default function QuestionsPanel({ testId, questions, setQuestions, onImpo
 
 // ------------------------------------------------------------------------------
 
-type Draft = { id?: number; text: string; is_correct: boolean; key: string }
+/** text = odpověď (výběr) nebo levá položka (přiřazování), right = možnost (přiřazování) */
+type Draft = { id?: number; text: string; right: string; is_correct: boolean; key: string }
 let keySeq = 0
 const newKey = () => `k${++keySeq}`
+const emptyDraft = (): Draft => ({ text: '', right: '', is_correct: false, key: newKey() })
 
 function QuestionCard({
   testId,
@@ -147,19 +154,21 @@ function QuestionCard({
 }) {
   const isNew = !question
   const [editing, setEditing] = useState(isNew)
+  const [type, setType] = useState<QuestionType>(question?.type ?? 'choice')
   const [text, setText] = useState(question?.text ?? '')
   const [explanation, setExplanation] = useState(question?.explanation ?? '')
-  const [drafts, setDrafts] = useState<Draft[]>(() =>
-    question ? [] : [0, 1, 2, 3].map(() => ({ text: '', is_correct: false, key: newKey() })),
-  )
+  const [drafts, setDrafts] = useState<Draft[]>(() => (question ? [] : [0, 1, 2, 3].map(emptyDraft)))
   const [busy, setBusy] = useState(false)
   const [togglingId, setTogglingId] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   function startEdit() {
+    setType(question?.type ?? 'choice')
     setText(question?.text ?? '')
     setExplanation(question?.explanation ?? '')
-    setDrafts(question?.answers.map((a) => ({ id: a.id, text: a.text, is_correct: a.is_correct, key: newKey() })) ?? [])
+    setDrafts(
+      question?.answers.map((a) => ({ id: a.id, text: a.text, right: a.match_text ?? '', is_correct: a.is_correct, key: newKey() })) ?? [],
+    )
     setError(null)
     setEditing(true)
   }
@@ -174,20 +183,23 @@ function QuestionCard({
   }
 
   async function save() {
-    const rows = drafts.filter((d) => d.text.trim())
+    const isMatch = type === 'match'
+    const rows = drafts.filter((d) => (isMatch ? d.right.trim() : d.text.trim()))
     if (!text.trim()) return setError('Otázka potřebuje text.')
-    if (rows.length < 1) return setError('Přidej aspoň jednu odpověď.')
+    if (isMatch) {
+      if (rows.filter((r) => r.text.trim()).length < 2) return setError('Přiřazování potřebuje aspoň 2 dvojice (položka i možnost).')
+    } else if (rows.length < 1) return setError('Přidej aspoň jednu odpověď.')
     setBusy(true)
     setError(null)
     try {
       let qid = question?.id
       if (qid) {
-        const { error } = await supabase.from('questions').update({ text: text.trim(), explanation: explanation.trim() }).eq('id', qid)
+        const { error } = await supabase.from('questions').update({ type, text: text.trim(), explanation: explanation.trim() }).eq('id', qid)
         if (error) throw error
       } else {
         const { data, error } = await supabase
           .from('questions')
-          .insert({ test_id: testId, text: text.trim(), explanation: explanation.trim(), position: nextPosition })
+          .insert({ test_id: testId, type, text: text.trim(), explanation: explanation.trim(), position: nextPosition })
           .select('id')
           .single()
         if (error) throw error
@@ -199,17 +211,17 @@ function QuestionCard({
         const { error } = await supabase.from('answers').delete().in('id', removed)
         if (error) throw error
       }
+      const toRow = (r: Draft, position: number) =>
+        isMatch
+          ? { question_id: qid, text: r.text.trim(), match_text: r.right.trim(), is_correct: !!r.text.trim(), position }
+          : { question_id: qid, text: r.text.trim(), match_text: null, is_correct: r.is_correct, position }
       const indexed = rows.map((r, i) => ({ r, position: i + 1 }))
-      const existing = indexed
-        .filter(({ r }) => r.id)
-        .map(({ r, position }) => ({ id: r.id, question_id: qid, text: r.text.trim(), is_correct: r.is_correct, position }))
+      const existing = indexed.filter(({ r }) => r.id).map(({ r, position }) => ({ id: r.id, ...toRow(r, position) }))
       if (existing.length) {
         const { error } = await supabase.from('answers').upsert(existing)
         if (error) throw error
       }
-      const fresh = indexed
-        .filter(({ r }) => !r.id)
-        .map(({ r, position }) => ({ question_id: qid, text: r.text.trim(), is_correct: r.is_correct, position }))
+      const fresh = indexed.filter(({ r }) => !r.id).map(({ r, position }) => toRow(r, position))
       if (fresh.length) {
         const { error } = await supabase.from('answers').insert(fresh)
         if (error) throw error
@@ -237,72 +249,93 @@ function QuestionCard({
   }
 
   const updateDraft = (key: string, patch: Partial<Draft>) => setDrafts((d) => d.map((x) => (x.key === key ? { ...x, ...patch } : x)))
+  const removeDraft = (key: string) => setDrafts((x) => x.filter((y) => y.key !== key))
+  const removeBtn = (key: string) => (
+    <Button type="button" variant="ghost" size="icon-sm" aria-label="Odebrat" onClick={() => removeDraft(key)}>
+      <X />
+    </Button>
+  )
+  const bareInput = 'h-8 border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent'
 
   // ------------------------------------------------------------------ úprava
   if (editing) {
     const marked = drafts.filter((d) => d.is_correct && d.text.trim()).length
     return (
       <div className="rounded-xl border border-primary/50 bg-card p-5 ring-3 ring-primary/10 sm:p-6">
-        <div className="mb-4 flex items-center gap-2">
+        <div className="mb-4 flex flex-wrap items-center gap-2">
           <span className="text-sm font-semibold">{isNew ? 'Nová otázka' : `Otázka ${num}`}</span>
           {question && <QuestionId id={question.id} />}
+          <ToggleGroup type="single" variant="outline" size="sm" value={type} onValueChange={(v) => v && setType(v as QuestionType)} className="ml-auto">
+            <ToggleGroupItem value="choice" className="px-3">Výběr odpovědi</ToggleGroupItem>
+            <ToggleGroupItem value="match" className="px-3">Přiřazování</ToggleGroupItem>
+          </ToggleGroup>
         </div>
         <div className="space-y-5">
           <div className="space-y-2">
             <Label htmlFor={`qt-${question?.id ?? 'new'}`}>Znění otázky</Label>
             <Textarea id={`qt-${question?.id ?? 'new'}`} autoFocus rows={3} value={text} onChange={(e) => setText(e.target.value)} />
+            <p className="text-xs text-muted-foreground">
+              Formátování: <code className="rounded bg-muted px-1">`kód`</code>, <code className="rounded bg-muted px-1">**tučně**</code>, blok kódu mezi řádky <code className="rounded bg-muted px-1">```</code>.
+            </p>
           </div>
 
-          <div className="space-y-2">
-            <div className="flex items-baseline justify-between gap-3">
-              <Label>Odpovědi</Label>
-              <span className="text-xs text-muted-foreground">
-                Kliknutím na písmeno označíš správnou. Označeno {marked}.
-              </span>
+          {type === 'choice' ? (
+            <div className="space-y-2">
+              <div className="flex items-baseline justify-between gap-3">
+                <Label>Odpovědi</Label>
+                <span className="text-xs text-muted-foreground">Kliknutím na písmeno označíš správnou. Označeno {marked}.</span>
+              </div>
+              {drafts.map((d, i) => (
+                <div key={d.key} className={cn('flex items-center gap-2 rounded-lg border p-1.5 transition-colors', d.is_correct ? 'border-success/40 bg-success-soft' : 'bg-background')}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        onClick={() => updateDraft(d.key, { is_correct: !d.is_correct })}
+                        aria-pressed={d.is_correct}
+                        aria-label={d.is_correct ? 'Správná odpověď' : 'Špatná odpověď'}
+                        className={cn(
+                          'grid size-8 shrink-0 place-items-center rounded-md border text-xs font-semibold transition-colors',
+                          d.is_correct ? 'border-success bg-success text-background' : 'text-muted-foreground hover:border-success hover:text-success',
+                        )}
+                      >
+                        {d.is_correct ? <Check className="size-4" strokeWidth={3} /> : LETTERS[i]}
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>{d.is_correct ? 'Označit jako špatnou' : 'Označit jako správnou'}</TooltipContent>
+                  </Tooltip>
+                  <Input value={d.text} placeholder={`Odpověď ${LETTERS[i]}`} onChange={(e) => updateDraft(d.key, { text: e.target.value })} className={bareInput} />
+                  {removeBtn(d.key)}
+                </div>
+              ))}
+              <Button type="button" variant="ghost" size="sm" onClick={() => setDrafts((x) => [...x, emptyDraft()])}>
+                <Plus /> Přidat odpověď
+              </Button>
             </div>
-            {drafts.map((d, i) => (
-              <div
-                key={d.key}
-                className={cn('flex items-center gap-2 rounded-lg border p-1.5 transition-colors', d.is_correct ? 'border-success/40 bg-success-soft' : 'bg-background')}
-              >
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      onClick={() => updateDraft(d.key, { is_correct: !d.is_correct })}
-                      aria-pressed={d.is_correct}
-                      aria-label={d.is_correct ? 'Správná odpověď' : 'Špatná odpověď'}
-                      className={cn(
-                        'grid size-8 shrink-0 place-items-center rounded-md border text-xs font-semibold transition-colors',
-                        d.is_correct ? 'border-success bg-success text-background' : 'text-muted-foreground hover:border-success hover:text-success',
-                      )}
-                    >
-                      {d.is_correct ? <Check className="size-4" strokeWidth={3} /> : LETTERS[i]}
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent>{d.is_correct ? 'Označit jako špatnou' : 'Označit jako správnou'}</TooltipContent>
-                </Tooltip>
-                <Input
-                  value={d.text}
-                  placeholder={`Odpověď ${LETTERS[i]}`}
-                  onChange={(e) => updateDraft(d.key, { text: e.target.value })}
-                  className="h-8 border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent"
-                />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label="Odebrat odpověď"
-                  onClick={() => setDrafts((x) => x.filter((y) => y.key !== d.key))}
-                >
-                  <X />
+          ) : (
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-baseline justify-between gap-3">
+                <Label>Dvojice</Label>
+                <span className="text-xs text-muted-foreground">Vlevo položka, vpravo správná možnost. Bez položky vlevo jde o matoucí možnost navíc.</span>
+              </div>
+              {drafts.map((d) => {
+                const distractor = !d.text.trim() && !!d.right.trim()
+                return (
+                  <div key={d.key} className={cn('grid grid-cols-[1fr_auto_1fr_auto] items-center gap-1.5 rounded-lg border p-1.5', distractor ? 'border-dashed bg-muted/40' : 'bg-background')}>
+                    <Input value={d.text} placeholder={distractor ? 'matoucí možnost' : 'Položka'} onChange={(e) => updateDraft(d.key, { text: e.target.value })} className={bareInput} />
+                    <ArrowRight className="size-4 text-muted-foreground" />
+                    <Input value={d.right} placeholder="Správná možnost" onChange={(e) => updateDraft(d.key, { right: e.target.value })} className={bareInput} />
+                    {removeBtn(d.key)}
+                  </div>
+                )
+              })}
+              <div className="flex flex-wrap gap-1">
+                <Button type="button" variant="ghost" size="sm" onClick={() => setDrafts((x) => [...x, emptyDraft()])}>
+                  <Plus /> Přidat dvojici
                 </Button>
               </div>
-            ))}
-            <Button type="button" variant="ghost" size="sm" onClick={() => setDrafts((x) => [...x, { text: '', is_correct: false, key: newKey() }])}>
-              <Plus /> Přidat odpověď
-            </Button>
-          </div>
+            </div>
+          )}
 
           <div className="space-y-2">
             <Label htmlFor={`qe-${question?.id ?? 'new'}`}>
@@ -326,13 +359,15 @@ function QuestionCard({
   // ------------------------------------------------------------------ náhled
   const q = question!
   const cc = correctCount(q)
+  const isMatch = q.type === 'match'
   return (
-    <article className="group/q rounded-xl border bg-card p-5 sm:p-6">
+    <article className="rounded-xl border bg-card p-5 sm:p-6">
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <span className="text-sm font-semibold text-muted-foreground tabular-nums">{num}.</span>
         <QuestionId id={q.id} />
-        {cc === 0 && <Badge variant="outline" className="border-warning/50 text-warning">Bez správné odpovědi</Badge>}
-        {cc > 1 && <Badge variant="secondary">{cc} správné</Badge>}
+        {isMatch && <Badge variant="secondary">Přiřazování</Badge>}
+        {isBroken(q) && <Badge variant="outline" className="border-warning/50 text-warning">Bez správné odpovědi</Badge>}
+        {!isMatch && cc > 1 && <Badge variant="secondary">{cc} správné</Badge>}
         <div className="ml-auto flex gap-1">
           <Button variant="ghost" size="sm" onClick={startEdit}><Pencil /> Upravit</Button>
           <Confirm
@@ -345,36 +380,56 @@ function QuestionCard({
           />
         </div>
       </div>
-      <p className="leading-relaxed font-medium whitespace-pre-wrap">{q.text}</p>
-      <ul className="mt-4 space-y-1.5">
-        {q.answers.map((a, i) => (
-          <li key={a.id} className={cn('flex items-center gap-3 rounded-lg border px-1.5 py-1.5', a.is_correct ? 'border-success/40 bg-success-soft' : '')}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={() => quickToggle(a)}
-                  disabled={togglingId === a.id}
-                  aria-pressed={a.is_correct}
-                  aria-label={a.is_correct ? 'Správná, kliknutím označit jako špatnou' : 'Špatná, kliknutím označit jako správnou'}
-                  className={cn(
-                    'grid size-7 shrink-0 place-items-center rounded-md border text-xs font-semibold transition-colors disabled:opacity-60',
-                    a.is_correct ? 'border-success bg-success text-background' : 'text-muted-foreground hover:border-success hover:text-success',
-                  )}
-                >
-                  {togglingId === a.id ? <Loader2 className="size-3.5 animate-spin" /> : a.is_correct ? <Check className="size-4" strokeWidth={3} /> : LETTERS[i]}
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>{a.is_correct ? 'Označit jako špatnou' : 'Označit jako správnou'}</TooltipContent>
-            </Tooltip>
-            <span className="flex-1 text-sm whitespace-pre-wrap">{a.text}</span>
-          </li>
-        ))}
-        {q.answers.length === 0 && <li className="text-sm text-muted-foreground">Žádné odpovědi.</li>}
-      </ul>
+      <RichText text={q.text} className="leading-relaxed font-medium" />
+
+      {isMatch ? (
+        <ul className="mt-4 space-y-1.5">
+          {q.answers.map((a) =>
+            a.text ? (
+              <li key={a.id} className="grid grid-cols-[1fr_auto_1fr] items-start gap-3 rounded-lg border border-success/40 bg-success-soft px-3 py-2 text-sm">
+                <RichText text={a.text} className="min-w-0" />
+                <ArrowRight className="mt-0.5 size-4 text-success" />
+                <RichText text={a.match_text ?? ''} className="min-w-0 font-medium" />
+              </li>
+            ) : (
+              <li key={a.id} className="flex items-center gap-3 rounded-lg border border-dashed px-3 py-2 text-sm text-muted-foreground">
+                <span className="text-xs">navíc</span>
+                <RichText as="span" text={a.match_text ?? ''} />
+              </li>
+            ),
+          )}
+        </ul>
+      ) : (
+        <ul className="mt-4 space-y-1.5">
+          {q.answers.map((a, i) => (
+            <li key={a.id} className={cn('flex items-center gap-3 rounded-lg border px-1.5 py-1.5', a.is_correct ? 'border-success/40 bg-success-soft' : '')}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={() => quickToggle(a)}
+                    disabled={togglingId === a.id}
+                    aria-pressed={a.is_correct}
+                    aria-label={a.is_correct ? 'Správná, kliknutím označit jako špatnou' : 'Špatná, kliknutím označit jako správnou'}
+                    className={cn(
+                      'grid size-7 shrink-0 place-items-center rounded-md border text-xs font-semibold transition-colors disabled:opacity-60',
+                      a.is_correct ? 'border-success bg-success text-background' : 'text-muted-foreground hover:border-success hover:text-success',
+                    )}
+                  >
+                    {togglingId === a.id ? <Loader2 className="size-3.5 animate-spin" /> : a.is_correct ? <Check className="size-4" strokeWidth={3} /> : LETTERS[i]}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>{a.is_correct ? 'Označit jako špatnou' : 'Označit jako správnou'}</TooltipContent>
+              </Tooltip>
+              <RichText text={a.text} className="min-w-0 flex-1 text-sm" />
+            </li>
+          ))}
+          {q.answers.length === 0 && <li className="text-sm text-muted-foreground">Žádné odpovědi.</li>}
+        </ul>
+      )}
       {q.explanation && (
         <div className="mt-4 flex gap-2.5 rounded-lg bg-muted px-3.5 py-3 text-sm text-muted-foreground">
           <Lightbulb className="mt-0.5 size-4 shrink-0" />
-          <p className="whitespace-pre-wrap">{q.explanation}</p>
+          <RichText text={q.explanation} className="min-w-0 flex-1" />
         </div>
       )}
     </article>

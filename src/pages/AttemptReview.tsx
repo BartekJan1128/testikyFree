@@ -8,6 +8,7 @@ import { errMsg, fmtDate, fmtDuration, scoreTone } from '@/lib/format'
 import { isIdQuery, makeQuestionMatcher } from '@/lib/search'
 import { cn } from '@/lib/utils'
 import { EmptyState, ErrorAlert, Loading, Page, QuestionId, SearchField, Stat } from '@/components/common'
+import { RichText } from '@/components/RichText'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
@@ -42,7 +43,7 @@ export default function AttemptReview() {
   const visible = items.filter(
     (it) =>
       (filter === 'all' || (filter === 'wrong' ? !it.is_correct : it.is_correct)) &&
-      matcher(it.question_id, it.question_text, ...it.answers.map((a) => a.text)),
+      matcher(it.question_id, it.question_text, ...it.answers.map((a) => `${a.text} ${a.match_text ?? ''}`)),
   )
 
   if (error) return <Page narrow><ErrorAlert error={error} /></Page>
@@ -146,9 +147,13 @@ function ReviewItem({ item, own }: { item: AttemptAnswer; own: boolean }) {
         </span>
         <span className="text-sm font-medium">Otázka {item.position}</span>
         <QuestionId id={item.question_id} />
-        {sel.size === 0 && <Badge variant="outline" className="text-warning">Bez odpovědi</Badge>}
+        {item.question_type === 'match' && <Badge variant="secondary">Přiřazování</Badge>}
+        {item.question_type !== 'match' && sel.size === 0 && <Badge variant="outline" className="text-warning">Bez odpovědi</Badge>}
       </div>
-      <p className="font-medium leading-relaxed whitespace-pre-wrap">{item.question_text}</p>
+      <RichText text={item.question_text} className="leading-relaxed font-medium" />
+      {item.question_type === 'match' ? (
+        <MatchReview item={item} own={own} />
+      ) : (
       <ul className="mt-4 space-y-1.5">
         {item.answers.map((a) => {
           const picked = sel.has(a.id)
@@ -169,7 +174,7 @@ function ReviewItem({ item, own }: { item: AttemptAnswer; own: boolean }) {
                 {state === 'wrong' && <X className="size-4 text-destructive" strokeWidth={2.5} />}
                 {state === 'missed' && <Check className="size-4 text-success/70" strokeWidth={2.5} />}
               </span>
-              <span className="flex-1 whitespace-pre-wrap">{a.text}</span>
+              <RichText as="span" text={a.text} className="min-w-0 flex-1" />
               {state !== 'none' && (
                 <span className="shrink-0 text-xs text-muted-foreground">
                   {state === 'hit' ? (own ? 'tvoje, správně' : 'vybráno, správně') : state === 'wrong' ? (own ? 'tvoje odpověď' : 'vybráno') : 'správná odpověď'}
@@ -179,12 +184,56 @@ function ReviewItem({ item, own }: { item: AttemptAnswer; own: boolean }) {
           )
         })}
       </ul>
+      )}
       {item.explanation && (
         <div className="mt-4 flex gap-2.5 rounded-lg bg-muted px-3.5 py-3 text-sm text-muted-foreground">
           <Lightbulb className="mt-0.5 size-4 shrink-0" />
-          <p className="whitespace-pre-wrap">{item.explanation}</p>
+          <RichText text={item.explanation} className="min-w-0 flex-1" />
         </div>
       )}
     </article>
+  )
+}
+
+function MatchReview({ item, own }: { item: AttemptAnswer; own: boolean }) {
+  const chosen = item.selected_matches ?? {}
+  const pairs = item.answers.filter((a) => a.text !== '')
+  return (
+    <div className="mt-4 overflow-hidden rounded-lg border">
+      <div className="hidden grid-cols-[1fr_1fr] gap-4 border-b bg-muted/50 px-3 py-2 text-xs font-medium text-muted-foreground sm:grid">
+        <span>Položka</span>
+        <span>{own ? 'Tvoje přiřazení' : 'Přiřazení'}</span>
+      </div>
+      <ul className="divide-y">
+        {pairs.map((a) => {
+          const pick = chosen[String(a.id)]
+          const ok = pick != null && pick.trim() === (a.match_text ?? '').trim()
+          return (
+            <li key={a.id} className="grid gap-1.5 px-3 py-2.5 text-sm sm:grid-cols-[1fr_1fr] sm:gap-4">
+              <RichText text={a.text} className="min-w-0" />
+              <div className="flex min-w-0 items-start gap-2">
+                {ok ? (
+                  <Check className="mt-0.5 size-4 shrink-0 text-success" strokeWidth={2.5} />
+                ) : (
+                  <X className="mt-0.5 size-4 shrink-0 text-destructive" strokeWidth={2.5} />
+                )}
+                <div className="min-w-0">
+                  {pick != null ? (
+                    <RichText as="span" text={pick} className={cn('font-medium', ok ? 'text-success' : 'text-destructive line-through decoration-destructive/50')} />
+                  ) : (
+                    <span className="text-warning">nepřiřazeno</span>
+                  )}
+                  {!ok && (
+                    <div className="mt-0.5 text-xs text-muted-foreground">
+                      správně: <RichText as="span" text={a.match_text ?? ''} className="font-medium text-success" />
+                    </div>
+                  )}
+                </div>
+              </div>
+            </li>
+          )
+        })}
+      </ul>
+    </div>
   )
 }

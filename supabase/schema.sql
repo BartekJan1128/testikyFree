@@ -77,6 +77,17 @@ create table if not exists public.attempt_answers (
 );
 create index if not exists attempt_answers_attempt_idx on public.attempt_answers(attempt_id, position);
 
+-- ---------- Migrace: otázky typu „přiřazování“ --------------------------
+--   choice = výběr odpovědí (výchozí), match = přiřazování dvojic
+--   u match: answers.text = levá položka, answers.match_text = správná možnost;
+--            řádek s prázdným text = matoucí možnost navíc (distraktor)
+alter table public.questions add column if not exists type text not null default 'choice';
+alter table public.questions drop constraint if exists questions_type_check;
+alter table public.questions add constraint questions_type_check check (type in ('choice', 'match'));
+alter table public.answers add column if not exists match_text text;
+alter table public.attempt_answers add column if not exists question_type text not null default 'choice';
+alter table public.attempt_answers add column if not exists selected_matches jsonb;
+
 -- ---------- Pomocné funkce ---------------------------------------------
 
 create or replace function public.is_admin()
@@ -180,12 +191,19 @@ begin
     'questions', coalesce((
       select jsonb_agg(jsonb_build_object(
         'id', q.id,
+        'type', q.type,
         'text', q.text,
-        'multiple', (select count(*) from answers a where a.question_id = q.id and a.is_correct) > 1,
+        'multiple', q.type = 'choice' and (select count(*) from answers a where a.question_id = q.id and a.is_correct) > 1,
+        -- choice: všechny odpovědi; match: jen levé položky (bez distraktorů)
         'answers', coalesce((
           select jsonb_agg(jsonb_build_object('id', a.id, 'text', a.text) order by a.position, a.id)
-          from answers a where a.question_id = q.id
-        ), '[]'::jsonb)
+          from answers a where a.question_id = q.id and (q.type = 'choice' or a.text <> '')
+        ), '[]'::jsonb),
+        -- match: možnosti abecedně, aby pořadí neprozradilo dvojice
+        'options', case when q.type = 'match' then coalesce((
+          select jsonb_agg(a.match_text order by lower(a.match_text), a.id)
+          from answers a where a.question_id = q.id and coalesce(a.match_text, '') <> ''
+        ), '[]'::jsonb) else '[]'::jsonb end
       ) order by q.position, q.id)
       from questions q where q.test_id = t.id
     ), '[]'::jsonb)
@@ -196,7 +214,9 @@ begin
 end;
 $$;
 
--- Odevzdání testu. p_answers = {"<question_id>": [answer_id, ...], ...}
+-- Odevzdání testu.
+--   výběr:       p_answers = {"<question_id>": [answer_id, ...]}
+--   přiřazování: p_answers = {"<question_id>": {"<answer_id>": "text vybrané možnosti", ...}}
 -- Vyhodnocení probíhá na serveru, výsledek se uloží i se snapshotem otázek.
 create or replace function public.submit_attempt(p_test_id bigint, p_answers jsonb, p_started_at timestamptz default null)
 returns bigint language plpgsql security definer set search_path = public as $$
@@ -210,6 +230,8 @@ declare
   v_correct_ids bigint[];
   v_ok boolean;
   v_pos int := 0;
+  v_raw jsonb;
+  v_matches jsonb;
 begin
   if auth.uid() is null or not public.has_test_access(p_test_id) then
     raise exception 'Nemáš přístup k tomuto testu.';
@@ -225,23 +247,44 @@ begin
     v_pos := v_pos + 1;
     v_total := v_total + 1;
 
-    select coalesce(array_agg(distinct x::bigint order by x::bigint), '{}')
-      into v_selected
-      from jsonb_array_elements_text(coalesce(p_answers -> q.id::text, '[]'::jsonb)) x
-      where exists (select 1 from answers a where a.id = x::bigint and a.question_id = q.id);
+    v_raw := p_answers -> q.id::text;
+    v_selected := '{}';
+    v_matches := null;
 
-    select coalesce(array_agg(id order by id), '{}') into v_correct_ids
-      from answers where question_id = q.id and is_correct;
+    if q.type = 'match' then
+      -- jen klíče patřící k levým položkám této otázky
+      select coalesce(jsonb_object_agg(a.id::text, v_raw ->> a.id::text), '{}'::jsonb)
+        into v_matches
+        from answers a
+        where a.question_id = q.id and a.text <> ''
+          and jsonb_typeof(v_raw) = 'object' and (v_raw ->> a.id::text) is not null;
 
-    v_ok := v_selected = v_correct_ids and cardinality(v_correct_ids) > 0;
+      select count(*) > 0 and bool_and(btrim(coalesce(v_matches ->> a.id::text, '')) = btrim(a.match_text))
+        into v_ok
+        from answers a where a.question_id = q.id and a.text <> '';
+      v_ok := coalesce(v_ok, false);
+    else
+      if jsonb_typeof(v_raw) = 'array' then
+        select coalesce(array_agg(distinct x::bigint order by x::bigint), '{}')
+          into v_selected
+          from jsonb_array_elements_text(v_raw) x
+          where x ~ '^\d+$' and exists (select 1 from answers a where a.id = x::bigint and a.question_id = q.id);
+      end if;
+
+      select coalesce(array_agg(id order by id), '{}') into v_correct_ids
+        from answers where question_id = q.id and is_correct;
+
+      v_ok := v_selected = v_correct_ids and cardinality(v_correct_ids) > 0;
+    end if;
+
     if v_ok then v_correct := v_correct + 1; end if;
 
-    insert into attempt_answers (attempt_id, question_id, question_text, explanation, answers, selected_answer_ids, is_correct, position)
+    insert into attempt_answers (attempt_id, question_id, question_type, question_text, explanation, answers, selected_answer_ids, selected_matches, is_correct, position)
     values (
-      v_attempt_id, q.id, q.text, q.explanation,
-      coalesce((select jsonb_agg(jsonb_build_object('id', a.id, 'text', a.text, 'is_correct', a.is_correct) order by a.position, a.id)
+      v_attempt_id, q.id, q.type, q.text, q.explanation,
+      coalesce((select jsonb_agg(jsonb_build_object('id', a.id, 'text', a.text, 'is_correct', a.is_correct, 'match_text', a.match_text) order by a.position, a.id)
                 from answers a where a.question_id = q.id), '[]'::jsonb),
-      v_selected, v_ok, v_pos
+      v_selected, v_matches, v_ok, v_pos
     );
   end loop;
 
@@ -273,7 +316,10 @@ begin
 end;
 $$;
 
--- Hromadný import otázek (admin). p_questions = [{text, explanation?, answers:[{text, correct}]}]
+-- Hromadný import otázek (admin).
+--   p_questions = [{type?: 'choice'|'match', text, explanation?,
+--                   answers?: [{text, correct}],            -- choice
+--                   pairs?: [{left, right}], distractors?: [text]}]   -- match
 create or replace function public.import_questions(p_test_id bigint, p_questions jsonb, p_replace boolean default false)
 returns int language plpgsql security definer set search_path = public as $$
 declare
@@ -282,6 +328,7 @@ declare
   v_pos int;
   v_apos int;
   v_count int := 0;
+  v_type text;
 begin
   if not public.is_admin() then raise exception 'Pouze pro admina.'; end if;
   if jsonb_typeof(p_questions) <> 'array' then raise exception 'Očekávám pole otázek.'; end if;
@@ -291,15 +338,29 @@ begin
 
   for q in select * from jsonb_array_elements(p_questions) loop
     v_pos := v_pos + 1;
-    insert into questions (test_id, text, explanation, position)
-    values (p_test_id, q->>'text', coalesce(q->>'explanation', ''), v_pos)
+    v_type := case when q->>'type' = 'match' then 'match' else 'choice' end;
+    insert into questions (test_id, type, text, explanation, position)
+    values (p_test_id, v_type, q->>'text', coalesce(q->>'explanation', ''), v_pos)
     returning id into v_qid;
     v_apos := 0;
-    for a in select * from jsonb_array_elements(coalesce(q->'answers', '[]'::jsonb)) loop
-      v_apos := v_apos + 1;
-      insert into answers (question_id, text, is_correct, position)
-      values (v_qid, a->>'text', coalesce((a->>'correct')::boolean, false), v_apos);
-    end loop;
+    if v_type = 'match' then
+      for a in select * from jsonb_array_elements(coalesce(q->'pairs', '[]'::jsonb)) loop
+        v_apos := v_apos + 1;
+        insert into answers (question_id, text, match_text, is_correct, position)
+        values (v_qid, a->>'left', a->>'right', true, v_apos);
+      end loop;
+      for a in select * from jsonb_array_elements(coalesce(q->'distractors', '[]'::jsonb)) loop
+        v_apos := v_apos + 1;
+        insert into answers (question_id, text, match_text, is_correct, position)
+        values (v_qid, '', a #>> '{}', false, v_apos);
+      end loop;
+    else
+      for a in select * from jsonb_array_elements(coalesce(q->'answers', '[]'::jsonb)) loop
+        v_apos := v_apos + 1;
+        insert into answers (question_id, text, is_correct, position)
+        values (v_qid, a->>'text', coalesce((a->>'correct')::boolean, false), v_apos);
+      end loop;
+    end if;
     v_count := v_count + 1;
   end loop;
   return v_count;

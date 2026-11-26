@@ -6,6 +6,9 @@ import { errMsg } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { CSV_LONG_TEMPLATE, CSV_WIDE_TEMPLATE, JSON_TEMPLATE, parseAuto, type ParseResult } from '@/lib/importParser'
 import { Confirm, ErrorAlert } from '@/components/common'
+import { ArrowRight } from 'lucide-react'
+import { RichText } from '@/components/RichText'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
@@ -30,7 +33,7 @@ const FORMATS = [
     file: 'sablona.json',
     type: 'application/json',
     body: JSON_TEMPLATE,
-    note: 'Odpovědi buď jako objekty s "correct": true/false, nebo jako pole textů a "correct": [1, 3] (pořadí od jedničky, jdou i písmena).',
+    note: 'Odpovědi jako objekty s "correct": true/false, nebo jako pole textů a "correct": [1, 3]. Přiřazování: "type": "match", "pairs" a volitelně "distractors". V textu jde použít `kód`, **tučně** a blok ``` … ``` (ve JSONu je nový řádek \\n).',
   },
   {
     key: 'wide',
@@ -38,7 +41,7 @@ const FORMATS = [
     file: 'sablona-otazky.csv',
     type: 'text/csv',
     body: CSV_WIDE_TEMPLATE,
-    note: 'Sloupec correct obsahuje písmena správných sloupců, víc se odděluje čárkou (A,C). Tohle se v Excelu vyplňuje nejpohodlněji.',
+    note: 'correct = písmena správných sloupců (A,C). U type=match jsou v buňkách dvojice "položka => možnost" a buňka bez => je matoucí možnost navíc. Víceřádkový text (blok kódu) dej do uvozovek.',
   },
   {
     key: 'long',
@@ -46,7 +49,7 @@ const FORMATS = [
     file: 'sablona-odpovedi.csv',
     type: 'text/csv',
     body: CSV_LONG_TEMPLATE,
-    note: 'Prázdná buňka v question znamená další odpověď k předchozí otázce. Správnost se píše jako 1/0, ano/ne nebo x.',
+    note: 'Prázdná buňka v question = další odpověď k předchozí otázce. Správnost 1/0, ano/ne nebo x. U type=match je v answer "položka => možnost".',
   },
 ]
 
@@ -90,6 +93,7 @@ export default function ImportPanel({
   }
 
   const ok = !!result && !result.errors.length && result.questions.length > 0
+  const matchN = result?.questions.filter((q) => q.type === 'match').length ?? 0
   const importLabel = ok ? `Importovat ${result!.questions.length} otázek` : 'Importovat'
   const importBtn = (
     <Button disabled={!ok || busy} onClick={replace && existingCount > 0 ? undefined : doImport}>
@@ -172,21 +176,41 @@ export default function ImportPanel({
             <div className="flex items-center gap-2 border-b px-5 py-3 text-sm">
               <CircleCheck className="size-4 text-success" />
               <span>
-                Rozpoznáno <b>{result!.questions.length}</b> otázek a {result!.questions.reduce((s, q) => s + q.answers.length, 0)} odpovědí
+                Rozpoznáno <b>{result!.questions.length}</b> otázek
+                {matchN > 0 && <>, z toho {matchN} přiřazování</>}
               </span>
             </div>
             <ol className="divide-y">
               {result!.questions.slice(0, 5).map((q, i) => (
                 <li key={i} className="px-5 py-4">
-                  <p className="text-sm font-medium">{i + 1}. {q.text}</p>
-                  <ul className="mt-2 space-y-1">
-                    {q.answers.map((a, j) => (
-                      <li key={j} className={cn('flex items-center gap-2 text-sm', a.correct ? 'text-success' : 'text-muted-foreground')}>
-                        <span className="w-4 text-xs font-semibold">{String.fromCharCode(65 + j)}</span>
-                        <span className={cn(a.correct && 'font-medium')}>{a.text}</span>
-                      </li>
-                    ))}
-                  </ul>
+                  <div className="flex gap-1.5 text-sm font-medium">
+                    <span>{i + 1}.</span>
+                    <RichText text={q.text} className="min-w-0 flex-1" />
+                    {q.type === 'match' && <Badge variant="secondary">Přiřazování</Badge>}
+                  </div>
+                  {q.type === 'match' ? (
+                    <ul className="mt-2 space-y-1 text-sm">
+                      {q.pairs.map((p, j) => (
+                        <li key={j} className="flex items-center gap-2 text-success">
+                          <RichText as="span" text={p.left} />
+                          <ArrowRight className="size-3.5 shrink-0" />
+                          <RichText as="span" text={p.right} className="font-medium" />
+                        </li>
+                      ))}
+                      {q.distractors.map((d, j) => (
+                        <li key={`d${j}`} className="text-muted-foreground">navíc: <RichText as="span" text={d} /></li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <ul className="mt-2 space-y-1">
+                      {q.answers.map((a, j) => (
+                        <li key={j} className={cn('flex items-start gap-2 text-sm', a.correct ? 'text-success' : 'text-muted-foreground')}>
+                          <span className="w-4 shrink-0 text-xs leading-5 font-semibold">{String.fromCharCode(65 + j)}</span>
+                          <RichText as="span" text={a.text} className={cn('min-w-0', a.correct && 'font-medium')} />
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </li>
               ))}
             </ol>

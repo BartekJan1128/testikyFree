@@ -22,27 +22,36 @@ Testovací aplikace pro kámoše: React (Vite) na GitHub Pages a Supabase jako b
 
 ## Formáty importu
 
-**JSON**
-```json
-[
-  { "question": "Hlavní město Francie?", "explanation": "volitelné",
-    "answers": [{ "text": "Lyon", "correct": false }, { "text": "Paříž", "correct": true }] },
-  { "question": "Prvočísla?", "answers": ["2", "4", "7"], "correct": [1, 3] }
-]
-```
+**Typy otázek**
+- `choice` (výchozí): výběr jedné nebo více správných odpovědí.
+- `match`: přiřazování. Položky vlevo a možnosti, které se k nim přetahují. Dvojice se zapisuje `položka => možnost`, buňka bez `=>` je matoucí možnost navíc.
 
-**CSV (řádek = otázka)**, oddělovač `;`, `,` nebo tab:
+**Formátování textu** (v otázce, odpovědích i vysvětlení): `` `kód` ``, `**tučně**` a blok kódu mezi řádky s ```` ``` ````. Za ```` ``` ```` jde napsat název bloku, třeba ```` ```cisco ````, a ten se ukáže v hlavičce.
+
+**CSV (řádek = otázka)**, oddělovač `;`, `,` nebo tab. Víceřádkový text patří do uvozovek:
 ```
-question;A;B;C;D;correct;explanation
-Hlavní město Francie?;Lyon;Paříž;Marseille;;B;
-Prvočísla?;2;4;7;9;A,C;
+question;type;A;B;C;D;correct;explanation
+Který protokol šifruje vzdálenou správu?;;Telnet;SSH;HTTP;;B;Telnet posílá vše čitelně.
+Přiřaď službu k portu.;match;SSH => 22;DNS => 53;HTTPS => 443;8080;;
 ```
 
 **CSV (řádek = odpověď)**, prázdná buňka otázky znamená další odpověď k předchozí otázce:
 ```
-question;answer;correct
-Hlavní město Francie?;Lyon;0
-;Paříž;1
+question;type;answer;correct
+Který protokol šifruje vzdálenou správu?;;Telnet;0
+;;SSH;1
+Přiřaď službu k portu.;match;SSH => 22;
+;;DNS => 53;
+;;8080;
+```
+
+**JSON**
+```json
+[
+  { "question": "Který protokol šifruje vzdálenou správu?", "answers": [{ "text": "Telnet", "correct": false }, { "text": "SSH", "correct": true }] },
+  { "question": "Vyber dvě:", "answers": ["Důvěrnost", "Rychlost", "Integrita"], "correct": [1, 3] },
+  { "type": "match", "question": "Přiřaď službu k portu.", "pairs": [{ "left": "SSH", "right": "22" }, { "left": "DNS", "right": "53" }], "distractors": ["8080"] }
+]
 ```
 
 ## Vývoj

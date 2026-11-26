@@ -8,6 +8,8 @@ import { cn } from '@/lib/utils'
 import { ErrorAlert, Loading, Page } from '@/components/common'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
+import { RichText } from '@/components/RichText'
+import { MatchQuestion, type MatchValue } from '@/components/MatchQuestion'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -20,7 +22,7 @@ import {
 } from '@/components/ui/alert-dialog'
 
 type TakeAnswer = { id: number; text: string }
-type TakeQuestion = { id: number; text: string; multiple: boolean; answers: TakeAnswer[] }
+type TakeQuestion = { id: number; type: 'choice' | 'match'; text: string; multiple: boolean; answers: TakeAnswer[]; options: string[] }
 type TakeTestData = {
   id: number
   title: string
@@ -29,7 +31,15 @@ type TakeTestData = {
   shuffle_answers: boolean
   questions: TakeQuestion[]
 }
-type ProgressState = { order: number[]; answerOrder: Record<number, number[]>; selected: Record<number, number[]>; startedAt: string; idx: number }
+type ProgressState = {
+  order: number[]
+  answerOrder: Record<number, number[]>
+  selected: Record<number, number[]>
+  /** přiřazování: question_id -> { answer_id: index možnosti } */
+  matches: Record<number, MatchValue>
+  startedAt: string
+  idx: number
+}
 
 const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
 
@@ -73,7 +83,7 @@ export default function TakeTest() {
       const ids = new Set(t.questions.map((q) => q.id))
       const saved = loadProgress(storageKey)
       if (saved && saved.order.length === ids.size && saved.order.every((x) => ids.has(x))) {
-        setProgress(saved)
+        setProgress({ ...saved, matches: saved.matches ?? {} })
         return
       }
       const order = (t.shuffle_questions ? shuffle(t.questions) : t.questions).map((q) => q.id)
@@ -81,7 +91,7 @@ export default function TakeTest() {
       t.questions.forEach((q) => {
         answerOrder[q.id] = (t.shuffle_answers ? shuffle(q.answers) : q.answers).map((a) => a.id)
       })
-      setProgress({ order, answerOrder, selected: {}, startedAt: new Date().toISOString(), idx: 0 })
+      setProgress({ order, answerOrder, selected: {}, matches: {}, startedAt: new Date().toISOString(), idx: 0 })
     })
   }, [testId, storageKey])
 
@@ -119,7 +129,7 @@ export default function TakeTest() {
   // klávesové zkratky: A–Z / 1–9 výběr, šipky navigace
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (!progress || confirmOpen || e.metaKey || e.ctrlKey || e.altKey) return
+      if (!progress || confirmOpen || q?.type === 'match' || e.metaKey || e.ctrlKey || e.altKey) return
       const tag = (e.target as HTMLElement)?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA') return
       if (e.key === 'ArrowRight') return go(progress.idx + 1)
@@ -135,7 +145,7 @@ export default function TakeTest() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [progress, answers, toggle, go, confirmOpen])
+  }, [progress, answers, toggle, go, confirmOpen, q])
 
   if (error && !test)
     return (
@@ -147,16 +157,33 @@ export default function TakeTest() {
   if (!test || !progress || !q) return <Loading label="Načítám test" />
 
   const selected = progress.selected[q.id] ?? []
-  const answeredCount = progress.order.filter((qid) => (progress.selected[qid] ?? []).length > 0).length
+  const isAnswered = (qid: number) => {
+    const qq = byId.get(qid)
+    if (qq?.type === 'match') return Object.keys(progress.matches[qid] ?? {}).length >= qq.answers.length
+    return (progress.selected[qid] ?? []).length > 0
+  }
+  const answeredCount = progress.order.filter(isAnswered).length
   const unanswered = total - answeredCount
   const isLast = progress.idx === total - 1
+
+  function buildAnswers() {
+    const out: Record<number, number[] | Record<number, string>> = { ...progress!.selected }
+    for (const [qid, m] of Object.entries(progress!.matches)) {
+      const qq = byId.get(Number(qid))
+      if (!qq) continue
+      const pairs: Record<number, string> = {}
+      for (const [aid, idx] of Object.entries(m)) if (qq.options[idx] != null) pairs[Number(aid)] = qq.options[idx]
+      out[Number(qid)] = pairs
+    }
+    return out
+  }
 
   async function submit() {
     if (!progress) return
     setSubmitting(true)
     const { data, error } = await supabase.rpc('submit_attempt', {
       p_test_id: testId,
-      p_answers: progress.selected,
+      p_answers: buildAnswers(),
       p_started_at: progress.startedAt,
     })
     if (error) {
@@ -194,11 +221,26 @@ export default function TakeTest() {
             <Progress value={((progress.idx + 1) / total) * 100} className="h-1" />
           </div>
 
-          <h2 className="text-xl leading-snug font-semibold whitespace-pre-wrap sm:text-[1.4rem]">{q.text}</h2>
+          <RichText as="div" text={q.text} className="font-heading text-xl leading-snug font-semibold sm:text-[1.4rem]" />
           <p className="mt-2 text-sm text-muted-foreground">
-            {q.multiple ? 'Správných odpovědí je víc, označ všechny.' : 'Vyber jednu odpověď.'}
+            {q.type === 'match'
+              ? 'Ke každé položce přiřaď správnou možnost.'
+              : q.multiple
+                ? 'Správných odpovědí je víc, označ všechny.'
+                : 'Vyber jednu odpověď.'}
           </p>
 
+          {q.type === 'match' ? (
+            <div className="mt-6">
+              <MatchQuestion
+                key={q.id}
+                items={answers}
+                options={q.options}
+                value={progress.matches[q.id] ?? {}}
+                onChange={(v) => setProgress((p) => (p ? { ...p, matches: { ...p.matches, [q.id]: v } } : p))}
+              />
+            </div>
+          ) : (
           <div className="mt-6 space-y-2.5" role={q.multiple ? 'group' : 'radiogroup'}>
             {answers.map((a, i) => {
               const on = selected.includes(a.id)
@@ -223,20 +265,25 @@ export default function TakeTest() {
                   >
                     {on && q.multiple ? <Check className="size-4" strokeWidth={3} /> : LETTERS[i]}
                   </span>
-                  <span className="pt-0.5 leading-relaxed whitespace-pre-wrap">
-                    <span className="hl hl-anim" data-on={on}>{a.text}</span>
+                  <span className="min-w-0 pt-0.5 leading-relaxed">
+                    <span className="hl hl-anim" data-on={on}>
+                      <RichText as="span" text={a.text} />
+                    </span>
                   </span>
                 </button>
               )
             })}
           </div>
+          )}
 
           <div className="mt-8 flex items-center gap-2">
             <Button variant="ghost" onClick={() => go(progress.idx - 1)} disabled={progress.idx === 0}>
               <ArrowLeft /> Předchozí
             </Button>
             <span className="hidden flex-1 text-center text-xs text-muted-foreground sm:block">
-              Klávesy A–{LETTERS[Math.max(0, answers.length - 1)]} vybírají, šipky přepínají otázky
+              {q.type === 'match'
+                ? 'Šipky přepínají otázky'
+                : `Klávesy A–${LETTERS[Math.max(0, answers.length - 1)]} vybírají, šipky přepínají otázky`}
             </span>
             <span className="flex-1 sm:hidden" />
             {isLast ? (
@@ -254,7 +301,7 @@ export default function TakeTest() {
           </div>
           <div className="grid grid-cols-[repeat(auto-fill,minmax(36px,1fr))] gap-1.5">
             {progress.order.map((qid, i) => {
-              const answered = (progress.selected[qid] ?? []).length > 0
+              const answered = isAnswered(qid)
               const current = i === progress.idx
               return (
                 <button
