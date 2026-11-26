@@ -10,6 +10,7 @@ import { Confirm, EmptyState, ErrorAlert, QuestionId, SearchField } from '@/comp
 import { RichText } from '@/components/RichText'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
@@ -33,6 +34,7 @@ export default function QuestionsPanel({ testId, questions, setQuestions, onImpo
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<Filter>('all')
   const [adding, setAdding] = useState(false)
+  const [selected, setSelected] = useState<Set<number>>(new Set())
 
   const matcher = useMemo(() => makeQuestionMatcher(query), [query])
   const broken = questions.filter(isBroken).length
@@ -49,7 +51,48 @@ export default function QuestionsPanel({ testId, questions, setQuestions, onImpo
     })
 
   const replace = (q: Question) => setQuestions((list) => list && list.map((x) => (x.id === q.id ? q : x)))
-  const remove = (id: number) => setQuestions((list) => list && list.filter((x) => x.id !== id))
+  const remove = (id: number) => {
+    setQuestions((list) => list && list.filter((x) => x.id !== id))
+    setSelected((s) => {
+      const n = new Set(s)
+      n.delete(id)
+      return n
+    })
+  }
+
+  const visibleIds = visible.map(({ q }) => q.id)
+  const selectedVisible = visibleIds.filter((id) => selected.has(id)).length
+  const allVisibleSelected = visibleIds.length > 0 && selectedVisible === visibleIds.length
+  const toggleOne = (id: number) =>
+    setSelected((s) => {
+      const n = new Set(s)
+      if (n.has(id)) n.delete(id)
+      else n.add(id)
+      return n
+    })
+  const toggleAllVisible = () =>
+    setSelected((s) => {
+      const n = new Set(s)
+      if (allVisibleSelected) visibleIds.forEach((id) => n.delete(id))
+      else visibleIds.forEach((id) => n.add(id))
+      return n
+    })
+
+  async function deleteSelected() {
+    const ids = [...selected]
+    // po dávkách, ať URL dotazu nepřeteče
+    for (let i = 0; i < ids.length; i += 150) {
+      const { error } = await supabase.from('questions').delete().in('id', ids.slice(i, i + 150))
+      if (error) {
+        toast.error(errMsg(error))
+        break
+      }
+      const done = new Set(ids.slice(i, i + 150))
+      setQuestions((list) => list && list.filter((x) => !done.has(x.id)))
+    }
+    setSelected(new Set())
+    toast.success(`Smazáno ${ids.length} ${ids.length === 1 ? 'otázka' : ids.length < 5 ? 'otázky' : 'otázek'}`)
+  }
 
   if (questions.length === 0 && !adding)
     return (
@@ -106,6 +149,40 @@ export default function QuestionsPanel({ testId, questions, setQuestions, onImpo
         />
       )}
 
+      {visible.length > 0 && (
+        <div
+          className={cn(
+            'sticky top-14 z-20 -mx-1 flex min-h-12 flex-wrap items-center gap-3 rounded-xl border px-4 py-2 transition-colors',
+            selected.size > 0 ? 'border-primary/40 bg-accent/90 backdrop-blur' : 'bg-background/90 backdrop-blur',
+          )}
+        >
+          <label className="flex cursor-pointer items-center gap-2.5 text-sm font-medium">
+            <Checkbox
+              checked={allVisibleSelected ? true : selectedVisible > 0 ? 'indeterminate' : false}
+              onCheckedChange={toggleAllVisible}
+              aria-label="Vybrat vše"
+            />
+            {query || filter !== 'all' ? `Vybrat nalezené (${visibleIds.length})` : `Vybrat vše (${visibleIds.length})`}
+          </label>
+          {selected.size > 0 && (
+            <>
+              <span className="text-sm text-muted-foreground">Vybráno {selected.size}</span>
+              <div className="ml-auto flex gap-2">
+                <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>Zrušit výběr</Button>
+                <Confirm
+                  trigger={<Button variant="destructive" size="sm"><Trash2 /> Smazat vybrané ({selected.size})</Button>}
+                  title={`Smazat ${selected.size} ${selected.size === 1 ? 'otázku' : selected.size < 5 ? 'otázky' : 'otázek'}?`}
+                  description="Otázky se smažou i s odpovědmi. Odevzdané pokusy v historii zůstanou."
+                  confirmLabel="Smazat"
+                  destructive
+                  onConfirm={deleteSelected}
+                />
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
       {visible.length === 0 ? (
         <EmptyState icon={SearchX} title={isIdQuery(query) ? 'Otázka s tímhle ID v testu není' : 'Nic neodpovídá hledání'} />
       ) : (
@@ -117,6 +194,8 @@ export default function QuestionsPanel({ testId, questions, setQuestions, onImpo
               num={num}
               question={q}
               nextPosition={q.position}
+              selected={selected.has(q.id)}
+              onSelect={() => toggleOne(q.id)}
               onSaved={replace}
               onDeleted={() => remove(q.id)}
             />
@@ -140,6 +219,8 @@ function QuestionCard({
   num,
   question,
   nextPosition,
+  selected,
+  onSelect,
   onSaved,
   onDeleted,
   onCancel,
@@ -148,6 +229,8 @@ function QuestionCard({
   num: number
   question: Question | null
   nextPosition: number
+  selected?: boolean
+  onSelect?: () => void
   onSaved: (q: Question) => void
   onDeleted?: () => void
   onCancel?: () => void
@@ -361,8 +444,9 @@ function QuestionCard({
   const cc = correctCount(q)
   const isMatch = q.type === 'match'
   return (
-    <article className="rounded-xl border bg-card p-5 sm:p-6">
+    <article className={cn('rounded-xl border bg-card p-5 transition-colors sm:p-6', selected && 'border-primary/60 bg-accent/30')}>
       <div className="mb-3 flex flex-wrap items-center gap-2">
+        {onSelect && <Checkbox checked={!!selected} onCheckedChange={onSelect} aria-label={`Vybrat otázku ID ${q.id}`} className="mr-1" />}
         <span className="text-sm font-semibold text-muted-foreground tabular-nums">{num}.</span>
         <QuestionId id={q.id} />
         {isMatch && <Badge variant="secondary">Přiřazování</Badge>}

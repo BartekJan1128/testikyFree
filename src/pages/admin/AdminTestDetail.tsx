@@ -65,8 +65,8 @@ export default function AdminTestDetail() {
       <ErrorAlert error={error} className="mb-6" />
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
-        <div className="-mx-4 mb-6 overflow-x-auto border-b px-4 sm:mx-0 sm:px-0">
-          <TabsList variant="line" className="h-10">
+        <div className="-mx-4 mb-6 overflow-x-auto overflow-y-hidden border-b px-4 [scrollbar-width:none] sm:mx-0 sm:px-0 [&::-webkit-scrollbar]:hidden">
+          <TabsList variant="line" className="h-10 [&>[data-slot=tabs-trigger]]:after:bottom-0!">
             <TabsTrigger value="questions" className="px-3">
               Otázky <span className="text-xs text-muted-foreground tabular-nums">{questions.length}</span>
             </TabsTrigger>
