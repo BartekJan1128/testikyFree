@@ -142,7 +142,7 @@ export default function AttemptReview() {
             <h3 className="font-semibold">Přehled</h3>
             <span className="text-sm text-muted-foreground tabular-nums">{right} / {items.length}</span>
           </div>
-          <div className="grid max-h-[calc(100vh-200px)] grid-cols-[repeat(auto-fill,minmax(36px,1fr))] gap-1.5 overflow-y-auto pr-1">
+          <div className="-mr-2 grid max-h-[calc(100vh-200px)] grid-cols-[repeat(auto-fill,minmax(36px,1fr))] gap-1.5 overflow-y-auto pr-2">
             {items.map((it) => (
               <button
                 key={it.id}
