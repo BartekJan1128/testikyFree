@@ -17,7 +17,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
   const [profile, setProfile] = useState<Profile | null>(null)
   const [sessionLoaded, setSessionLoaded] = useState(false)
-  const [profileLoaded, setProfileLoaded] = useState(false)
+  // pro kterého uživatele je profil načtený – brání krátkému stavu „session je, profil ještě ne“
+  const [profileFor, setProfileFor] = useState<string | null | undefined>(undefined)
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -35,16 +36,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const loadProfile = useCallback(async () => {
     if (!userId) {
       setProfile(null)
-      setProfileLoaded(true)
+      setProfileFor(null)
       return
     }
     const { data } = await supabase.from('profiles').select('*').eq('id', userId).maybeSingle()
     setProfile((data as Profile) ?? null)
-    setProfileLoaded(true)
+    setProfileFor(userId)
   }, [userId])
 
   useEffect(() => {
-    setProfileLoaded(false)
     loadProfile()
   }, [loadProfile])
 
@@ -57,7 +57,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       value={{
         session,
         profile,
-        loading: !sessionLoaded || (!!userId && !profileLoaded),
+        loading: !sessionLoaded || (!!userId && profileFor !== userId),
         refreshProfile: loadProfile,
         signOut,
       }}
