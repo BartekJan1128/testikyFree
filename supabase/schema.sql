@@ -404,3 +404,23 @@ revoke execute on function public.list_my_tests() from anon, public;
 revoke execute on function public.set_user_admin(uuid, boolean) from anon, public;
 grant execute on function public.list_my_tests() to authenticated;
 grant execute on function public.set_user_admin(uuid, boolean) to authenticated;
+
+-- ---------- Obrázky k otázkám (Supabase Storage) -----------------------
+-- Veřejně čitelný bucket; nahrávat, měnit a mazat smí jen admin.
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('question-images', 'question-images', true, 5242880, array['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
+on conflict (id) do update set public = true, file_size_limit = excluded.file_size_limit, allowed_mime_types = excluded.allowed_mime_types;
+
+drop policy if exists question_images_admin_insert on storage.objects;
+create policy question_images_admin_insert on storage.objects for insert to authenticated
+  with check (bucket_id = 'question-images' and public.is_admin());
+drop policy if exists question_images_admin_update on storage.objects;
+create policy question_images_admin_update on storage.objects for update to authenticated
+  using (bucket_id = 'question-images' and public.is_admin());
+drop policy if exists question_images_admin_delete on storage.objects;
+create policy question_images_admin_delete on storage.objects for delete to authenticated
+  using (bucket_id = 'question-images' and public.is_admin());
+-- mazání přes Storage API potřebuje i select oprávnění
+drop policy if exists question_images_admin_select on storage.objects;
+create policy question_images_admin_select on storage.objects for select to authenticated
+  using (bucket_id = 'question-images' and public.is_admin());

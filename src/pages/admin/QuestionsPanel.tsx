@@ -1,9 +1,10 @@
-import { useMemo, useState, type Dispatch, type SetStateAction } from 'react'
-import { ArrowRight, Check, FileUp, Lightbulb, ListPlus, Loader2, Pencil, Plus, SearchX, Trash2, TriangleAlert, X } from 'lucide-react'
+import { useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react'
+import { ArrowRight, Check, FileUp, ImagePlus, Lightbulb, ListPlus, Loader2, Pencil, Plus, SearchX, Trash2, TriangleAlert, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { supabase } from '@/lib/supabase'
 import type { Answer, Question, QuestionType } from '@/lib/types'
 import { errMsg } from '@/lib/format'
+import { imageFromClipboard, imageMarkdown, uploadImage } from '@/lib/upload'
 import { isIdQuery, makeQuestionMatcher } from '@/lib/search'
 import { cn } from '@/lib/utils'
 import { Confirm, EmptyState, ErrorAlert, QuestionId, SearchField } from '@/components/common'
@@ -244,6 +245,29 @@ function QuestionCard({
   const [busy, setBusy] = useState(false)
   const [togglingId, setTogglingId] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [uploading, setUploading] = useState(false)
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  /** Nahraje obrázek a výsledný zápis ![](url) předá do apply. */
+  async function addImage(file: File, apply: (md: string) => void) {
+    setUploading(true)
+    try {
+      apply(imageMarkdown(await uploadImage(file)))
+      toast.success('Obrázek nahrán')
+    } catch (e) {
+      toast.error(errMsg(e))
+    } finally {
+      setUploading(false)
+    }
+  }
+  const appendMd = (prev: string, md: string) => (prev.trim() ? prev.replace(/\s*$/, '') + '\n' : '') + md
+  /** onPaste pro pole: když je ve schránce obrázek, nahraje ho a vloží. */
+  const pasteImage = (apply: (md: string) => void) => (e: React.ClipboardEvent) => {
+    const f = imageFromClipboard(e)
+    if (!f) return
+    e.preventDefault()
+    addImage(f, apply)
+  }
 
   function startEdit() {
     setType(question?.type ?? 'choice')
@@ -355,10 +379,39 @@ function QuestionCard({
         </div>
         <div className="space-y-5">
           <div className="space-y-2">
-            <Label htmlFor={`qt-${question?.id ?? 'new'}`}>Znění otázky</Label>
-            <Textarea id={`qt-${question?.id ?? 'new'}`} autoFocus rows={3} value={text} onChange={(e) => setText(e.target.value)} />
+            <div className="flex items-end justify-between gap-3">
+              <Label htmlFor={`qt-${question?.id ?? 'new'}`}>Znění otázky</Label>
+              <Button type="button" variant="outline" size="sm" disabled={uploading} onClick={() => fileRef.current?.click()}>
+                {uploading ? <Loader2 className="animate-spin" /> : <ImagePlus />} Obrázek
+              </Button>
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/png,image/jpeg,image/gif,image/webp"
+                hidden
+                onChange={(e) => {
+                  const f = e.target.files?.[0]
+                  e.target.value = ''
+                  if (f) addImage(f, (md) => setText((t) => appendMd(t, md)))
+                }}
+              />
+            </div>
+            <Textarea
+              id={`qt-${question?.id ?? 'new'}`}
+              autoFocus
+              rows={3}
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              onPaste={pasteImage((md) => setText((t) => appendMd(t, md)))}
+            />
+            {/!\[[^\]]*\]\(/.test(text) && (
+              <div className="rounded-lg border border-dashed p-3">
+                <div className="mb-1 text-xs text-muted-foreground">Náhled</div>
+                <RichText text={text} className="text-sm" />
+              </div>
+            )}
             <p className="text-xs text-muted-foreground">
-              Formátování: <code className="rounded bg-muted px-1">`kód`</code>, <code className="rounded bg-muted px-1">**tučně**</code>, blok kódu mezi řádky <code className="rounded bg-muted px-1">```</code>.
+              Formátování: <code className="rounded bg-muted px-1">`kód`</code>, <code className="rounded bg-muted px-1">**tučně**</code>, blok kódu mezi řádky <code className="rounded bg-muted px-1">```</code>. Obrázek vložíš tlačítkem nebo Ctrl+V screenshotu (i do odpovědí).
             </p>
           </div>
 
@@ -387,7 +440,7 @@ function QuestionCard({
                     </TooltipTrigger>
                     <TooltipContent>{d.is_correct ? 'Označit jako špatnou' : 'Označit jako správnou'}</TooltipContent>
                   </Tooltip>
-                  <Input value={d.text} placeholder={`Odpověď ${LETTERS[i]}`} onChange={(e) => updateDraft(d.key, { text: e.target.value })} className={bareInput} />
+                  <Input value={d.text} placeholder={`Odpověď ${LETTERS[i]}`} onChange={(e) => updateDraft(d.key, { text: e.target.value })} onPaste={pasteImage((md) => setDrafts((x) => x.map((y) => (y.key === d.key ? { ...y, text: appendMd(y.text, md).replace(/\n/g, ' ') } : y))))} className={bareInput} />
                   {removeBtn(d.key)}
                 </div>
               ))}
@@ -407,7 +460,7 @@ function QuestionCard({
                   <div key={d.key} className={cn('grid grid-cols-[1fr_auto_1fr_auto] items-center gap-1.5 rounded-lg border p-1.5', distractor ? 'border-dashed bg-muted/40' : 'bg-background')}>
                     <Input value={d.text} placeholder={distractor ? 'matoucí možnost' : 'Položka'} onChange={(e) => updateDraft(d.key, { text: e.target.value })} className={bareInput} />
                     <ArrowRight className="size-4 text-muted-foreground" />
-                    <Input value={d.right} placeholder="Správná možnost" onChange={(e) => updateDraft(d.key, { right: e.target.value })} className={bareInput} />
+                    <Input value={d.right} placeholder="Správná možnost" onChange={(e) => updateDraft(d.key, { right: e.target.value })} onPaste={pasteImage((md) => setDrafts((x) => x.map((y) => (y.key === d.key ? { ...y, right: appendMd(y.right, md).replace(/\n/g, ' ') } : y))))} className={bareInput} />
                     {removeBtn(d.key)}
                   </div>
                 )
@@ -424,7 +477,13 @@ function QuestionCard({
             <Label htmlFor={`qe-${question?.id ?? 'new'}`}>
               Vysvětlení <span className="font-normal text-muted-foreground">(nepovinné, ukáže se po odevzdání)</span>
             </Label>
-            <Textarea id={`qe-${question?.id ?? 'new'}`} rows={2} value={explanation} onChange={(e) => setExplanation(e.target.value)} />
+            <Textarea
+              id={`qe-${question?.id ?? 'new'}`}
+              rows={2}
+              value={explanation}
+              onChange={(e) => setExplanation(e.target.value)}
+              onPaste={pasteImage((md) => setExplanation((t) => appendMd(t, md)))}
+            />
           </div>
 
           <ErrorAlert error={error} />
