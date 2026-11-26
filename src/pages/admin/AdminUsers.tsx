@@ -1,10 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { supabase } from '../../lib/supabase'
-import { useAuth } from '../../lib/auth'
-import type { Profile } from '../../lib/types'
-import { errMsg, fmtDate } from '../../lib/format'
-import { Empty, ErrorBox, SearchInput, Spinner } from '../../components/ui'
+import { Check, MoreHorizontal, ShieldCheck, ShieldOff, UserX } from 'lucide-react'
+import { toast } from 'sonner'
+import { supabase } from '@/lib/supabase'
+import { useAuth } from '@/lib/auth'
+import type { Profile } from '@/lib/types'
+import { errMsg, fmtDate } from '@/lib/format'
+import { cn } from '@/lib/utils'
+import { EmptyState, ErrorAlert, Loading, Page, PageHeader, SearchField } from '@/components/common'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 
 type TestLite = { id: number; title: string }
 const norm = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
@@ -41,12 +47,11 @@ export default function AdminUsers() {
     const key = `${t.id}:${u.id}`
     const has = access.has(key)
     setBusy(key)
-    setError(null)
     const { error } = has
       ? await supabase.from('test_access').delete().eq('test_id', t.id).eq('user_id', u.id)
       : await supabase.from('test_access').insert({ test_id: t.id, user_id: u.id })
     setBusy(null)
-    if (error) return setError(errMsg(error))
+    if (error) return toast.error(errMsg(error))
     setAccess((s) => {
       const n = new Set(s)
       if (has) n.delete(key)
@@ -55,70 +60,87 @@ export default function AdminUsers() {
     })
   }
 
-  async function toggleAdmin(u: Profile) {
-    const next = !u.is_admin
-    if (!confirm(next ? `Udělat z ${u.display_name || u.email} admina? Bude moct upravovat testy a přístupy.` : `Odebrat ${u.display_name || u.email} práva admina?`)) return
+  async function setAdmin(u: Profile, next: boolean) {
     setBusy(`admin:${u.id}`)
     const { error } = await supabase.rpc('set_user_admin', { p_user_id: u.id, p_is_admin: next })
     setBusy(null)
-    if (error) return setError(errMsg(error))
+    if (error) return toast.error(errMsg(error))
     setUsers((list) => list && list.map((x) => (x.id === u.id ? { ...x, is_admin: next } : x)))
+    toast.success(next ? `${u.display_name || u.email} je teď admin` : `${u.display_name || u.email} už není admin`)
   }
 
-  if (!users) return <Spinner />
+  if (!users) return <Loading />
 
   return (
-    <div className="container">
-      <div className="crumbs"><Link to="/admin">Administrace</Link> / Uživatelé</div>
-      <div className="page-head">
-        <div>
-          <h1>Uživatelé a přístupy</h1>
-          <p className="sub">{users.length} registrovaných. Kliknutím na test u uživatele přepneš přístup.</p>
-        </div>
-      </div>
-      <div className="row" style={{ marginBottom: 14 }}>
-        <SearchInput value={query} onChange={setQuery} placeholder="Hledat podle jména nebo e-mailu…" />
-      </div>
-      <ErrorBox error={error} />
+    <Page>
+      <PageHeader
+        back={<Link to="/admin" className="hover:text-foreground">Administrace</Link>}
+        title="Uživatelé"
+        description="Kliknutím na test u uživatele mu přístup přidáš nebo odebereš."
+      />
+      <SearchField value={query} onChange={setQuery} placeholder="Hledat podle jména nebo e-mailu" className="mb-5 max-w-md" />
+      <ErrorAlert error={error} className="mb-5" />
       {visible.length === 0 ? (
-        <Empty title="Nikdo nenalezen" />
+        <EmptyState icon={UserX} title="Nikdo takový tu není" />
       ) : (
-        <div className="stack">
+        <div className="divide-y overflow-hidden rounded-xl border bg-card">
           {visible.map((u) => (
-            <div key={u.id} className="card tight stack" style={{ gap: 10 }}>
-              <div className="row">
-                <div style={{ minWidth: 0 }}>
-                  <b>{u.display_name || '—'}</b> {u.is_admin && <span className="badge accent">admin</span>}
-                  <div className="small muted">{u.email} · registrace {fmtDate(u.created_at)}</div>
+            <div key={u.id} className="flex flex-col gap-3 p-5 md:flex-row md:items-start md:gap-6">
+              <div className="min-w-0 md:w-64 md:shrink-0">
+                <div className="flex items-center gap-2 font-medium">
+                  <span className="truncate">{u.display_name || 'Bez jména'}</span>
+                  {u.is_admin && <Badge variant="secondary">admin</Badge>}
                 </div>
-                <span className="spacer" />
-                {u.id !== session?.user.id && (
-                  <button className="btn sm ghost" disabled={busy !== null} onClick={() => toggleAdmin(u)}>
-                    {u.is_admin ? 'Odebrat admina' : 'Udělat adminem'}
-                  </button>
-                )}
+                <div className="truncate text-sm text-muted-foreground">{u.email}</div>
+                <div className="mt-0.5 text-xs text-muted-foreground">registrace {fmtDate(u.created_at)}</div>
               </div>
-              {u.is_admin ? (
-                <span className="small muted">Admin má přístup ke všem testům.</span>
-              ) : tests.length === 0 ? (
-                <span className="small muted">Zatím neexistuje žádný test.</span>
-              ) : (
-                <div className="row" style={{ gap: 6 }}>
-                  {tests.map((t) => {
+              <div className="flex flex-1 flex-wrap gap-1.5">
+                {u.is_admin ? (
+                  <span className="text-sm text-muted-foreground">Admin vidí všechny testy.</span>
+                ) : tests.length === 0 ? (
+                  <span className="text-sm text-muted-foreground">Zatím neexistuje žádný test.</span>
+                ) : (
+                  tests.map((t) => {
                     const key = `${t.id}:${u.id}`
                     const on = access.has(key)
                     return (
-                      <button key={t.id} className={`chip-toggle${on ? ' on' : ''}`} disabled={busy === key} onClick={() => toggleAccess(u, t)}>
-                        {on ? '✓ ' : ''}{t.title}
+                      <button
+                        key={t.id}
+                        disabled={busy === key}
+                        onClick={() => toggleAccess(u, t)}
+                        aria-pressed={on}
+                        className={cn(
+                          'inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-colors disabled:opacity-60',
+                          on ? 'border-primary bg-primary text-primary-foreground' : 'text-muted-foreground hover:border-foreground/30 hover:text-foreground',
+                        )}
+                      >
+                        {on && <Check className="size-3.5" strokeWidth={3} />}
+                        {t.title}
                       </button>
                     )
-                  })}
-                </div>
+                  })
+                )}
+              </div>
+              {u.id !== session?.user.id && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" size="icon-sm" aria-label="Další akce" disabled={busy !== null} className="self-start">
+                      <MoreHorizontal />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    {u.is_admin ? (
+                      <DropdownMenuItem onSelect={() => setAdmin(u, false)}><ShieldOff /> Odebrat roli admina</DropdownMenuItem>
+                    ) : (
+                      <DropdownMenuItem onSelect={() => setAdmin(u, true)}><ShieldCheck /> Udělat adminem</DropdownMenuItem>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
               )}
             </div>
           ))}
         </div>
       )}
-    </div>
+    </Page>
   )
 }

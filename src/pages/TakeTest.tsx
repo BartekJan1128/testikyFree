@@ -1,9 +1,23 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { supabase } from '../lib/supabase'
-import { useAuth } from '../lib/auth'
-import { errMsg, shuffle } from '../lib/format'
-import { ErrorBox, Modal, Spinner } from '../components/ui'
+import { ArrowLeft, ArrowRight, Check, Loader2, Send } from 'lucide-react'
+import { supabase } from '@/lib/supabase'
+import { useAuth } from '@/lib/auth'
+import { errMsg, shuffle } from '@/lib/format'
+import { cn } from '@/lib/utils'
+import { ErrorAlert, Loading, Page } from '@/components/common'
+import { Button } from '@/components/ui/button'
+import { Progress } from '@/components/ui/progress'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 
 type TakeAnswer = { id: number; text: string }
 type TakeQuestion = { id: number; text: string; multiple: boolean; answers: TakeAnswer[] }
@@ -15,19 +29,19 @@ type TakeTestData = {
   shuffle_answers: boolean
   questions: TakeQuestion[]
 }
-type Progress = { order: number[]; answerOrder: Record<number, number[]>; selected: Record<number, number[]>; startedAt: string; idx: number }
+type ProgressState = { order: number[]; answerOrder: Record<number, number[]>; selected: Record<number, number[]>; startedAt: string; idx: number }
 
 const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
 
-function loadProgress(key: string): Progress | null {
+function loadProgress(key: string): ProgressState | null {
   try {
     const raw = localStorage.getItem(key)
-    return raw ? (JSON.parse(raw) as Progress) : null
+    return raw ? (JSON.parse(raw) as ProgressState) : null
   } catch {
     return null
   }
 }
-function saveProgress(key: string, p: Progress | null) {
+function saveProgress(key: string, p: ProgressState | null) {
   try {
     if (p) localStorage.setItem(key, JSON.stringify(p))
     else localStorage.removeItem(key)
@@ -35,6 +49,8 @@ function saveProgress(key: string, p: Progress | null) {
     /* ignore */
   }
 }
+
+const plural = (n: number) => (n === 1 ? 'otázku' : n >= 2 && n <= 4 ? 'otázky' : 'otázek')
 
 export default function TakeTest() {
   const { id } = useParams()
@@ -44,22 +60,18 @@ export default function TakeTest() {
   const storageKey = `testiky:progress:${session?.user.id}:${testId}`
 
   const [test, setTest] = useState<TakeTestData | null>(null)
-  const [progress, setProgress] = useState<Progress | null>(null)
+  const [progress, setProgress] = useState<ProgressState | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [submitting, setSubmitting] = useState(false)
 
   useEffect(() => {
     supabase.rpc('get_test_for_taking', { p_test_id: testId }).then(({ data, error }) => {
-      if (error) {
-        setError(errMsg(error))
-        return
-      }
+      if (error) return setError(errMsg(error))
       const t = data as TakeTestData
       setTest(t)
       const ids = new Set(t.questions.map((q) => q.id))
       const saved = loadProgress(storageKey)
-      // pokračuj v rozpracovaném testu, pokud se mezitím nezměnily otázky
       if (saved && saved.order.length === ids.size && saved.order.every((x) => ids.has(x))) {
         setProgress(saved)
         return
@@ -78,34 +90,66 @@ export default function TakeTest() {
   }, [progress, storageKey])
 
   const byId = useMemo(() => new Map(test?.questions.map((q) => [q.id, q]) ?? []), [test])
+  const total = progress?.order.length ?? 0
+  const q = progress ? byId.get(progress.order[progress.idx]) : undefined
+  const answers = useMemo(() => {
+    if (!q || !progress) return []
+    const m = new Map(q.answers.map((a) => [a.id, a]))
+    return (progress.answerOrder[q.id] ?? q.answers.map((a) => a.id)).map((aid) => m.get(aid)).filter(Boolean) as TakeAnswer[]
+  }, [q, progress])
 
-  if (error)
+  const go = useCallback(
+    (idx: number) => setProgress((p) => (p ? { ...p, idx: Math.max(0, Math.min(p.order.length - 1, idx)) } : p)),
+    [],
+  )
+
+  const toggle = useCallback(
+    (aid: number) => {
+      if (!q) return
+      setProgress((p) => {
+        if (!p) return p
+        const cur = p.selected[q.id] ?? []
+        const next = q.multiple ? (cur.includes(aid) ? cur.filter((x) => x !== aid) : [...cur, aid]) : cur.includes(aid) ? [] : [aid]
+        return { ...p, selected: { ...p.selected, [q.id]: next } }
+      })
+    },
+    [q],
+  )
+
+  // klávesové zkratky: A–Z / 1–9 výběr, šipky navigace
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (!progress || confirmOpen || e.metaKey || e.ctrlKey || e.altKey) return
+      const tag = (e.target as HTMLElement)?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return
+      if (e.key === 'ArrowRight') return go(progress.idx + 1)
+      if (e.key === 'ArrowLeft') return go(progress.idx - 1)
+      const k = e.key.toUpperCase()
+      let i = -1
+      if (/^[1-9]$/.test(k)) i = Number(k) - 1
+      else if (/^[A-Z]$/.test(k)) i = LETTERS.indexOf(k)
+      if (i >= 0 && answers[i]) {
+        e.preventDefault()
+        toggle(answers[i].id)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [progress, answers, toggle, go, confirmOpen])
+
+  if (error && !test)
     return (
-      <div className="container narrow stack">
-        <ErrorBox error={error} />
-        <Link to="/" className="btn" style={{ alignSelf: 'flex-start' }}>Zpět na testy</Link>
-      </div>
+      <Page narrow className="space-y-4">
+        <ErrorAlert error={error} />
+        <Button variant="outline" asChild><Link to="/"><ArrowLeft /> Zpět na testy</Link></Button>
+      </Page>
     )
-  if (!test || !progress) return <Spinner label="Načítám test…" />
+  if (!test || !progress || !q) return <Loading label="Načítám test" />
 
-  const total = progress.order.length
-  const q = byId.get(progress.order[progress.idx])!
-  const answerMap = new Map(q.answers.map((a) => [a.id, a]))
-  const answers = (progress.answerOrder[q.id] ?? q.answers.map((a) => a.id)).map((aid) => answerMap.get(aid)).filter(Boolean) as TakeAnswer[]
   const selected = progress.selected[q.id] ?? []
   const answeredCount = progress.order.filter((qid) => (progress.selected[qid] ?? []).length > 0).length
   const unanswered = total - answeredCount
-
-  const go = (idx: number) => setProgress((p) => (p ? { ...p, idx: Math.max(0, Math.min(total - 1, idx)) } : p))
-
-  function toggle(aid: number) {
-    setProgress((p) => {
-      if (!p) return p
-      const cur = p.selected[q.id] ?? []
-      const next = q.multiple ? (cur.includes(aid) ? cur.filter((x) => x !== aid) : [...cur, aid]) : cur.includes(aid) ? [] : [aid]
-      return { ...p, selected: { ...p.selected, [q.id]: next } }
-    })
-  }
+  const isLast = progress.idx === total - 1
 
   async function submit() {
     if (!progress) return
@@ -118,40 +162,44 @@ export default function TakeTest() {
     if (error) {
       setSubmitting(false)
       setConfirmOpen(false)
-      setError(errMsg(error))
-      return
+      return setError(errMsg(error))
     }
     saveProgress(storageKey, null)
     navigate(`/attempt/${data}`, { replace: true })
   }
 
   return (
-    <div className="container">
-      <div className="page-head">
-        <div>
-          <div className="crumbs"><Link to="/">Testy</Link> / {test.title}</div>
-          <h1>{test.title}</h1>
+    <Page>
+      <div className="mb-6 flex flex-wrap items-center gap-4">
+        <div className="min-w-0 flex-1">
+          <Link to="/" className="text-sm text-muted-foreground hover:text-foreground">Testy</Link>
+          <h1 className="truncate text-2xl font-bold">{test.title}</h1>
         </div>
-        <button className="btn primary" onClick={() => setConfirmOpen(true)}>Odevzdat test</button>
+        <Button variant="outline" onClick={() => setConfirmOpen(true)}>
+          <Send /> Odevzdat
+        </Button>
       </div>
 
-      <div className="take-layout">
-        <div className="card stack" style={{ gap: 18 }}>
-          <div className="stack" style={{ gap: 8 }}>
-            <div className="row small muted">
-              <span>Otázka <b style={{ color: 'var(--text)' }}>{progress.idx + 1}</b> z {total}</span>
-              <span className="spacer" />
-              <span className="qid" title="ID otázky">#{q.id}</span>
+      <ErrorAlert error={error} className="mb-6" />
+
+      <div className="grid items-start gap-6 lg:grid-cols-[1fr_272px]">
+        <section className="rounded-2xl border bg-card p-5 sm:p-8">
+          <div className="mb-6 space-y-3">
+            <div className="flex items-baseline justify-between text-sm text-muted-foreground">
+              <span>
+                Otázka <span className="font-semibold text-foreground tabular-nums">{progress.idx + 1}</span> z {total}
+              </span>
+              <span className="text-xs tabular-nums">ID {q.id}</span>
             </div>
-            <div className="progress"><div style={{ transform: `scaleX(${(progress.idx + 1) / total})` }} /></div>
+            <Progress value={((progress.idx + 1) / total) * 100} className="h-1" />
           </div>
 
-          <div className="stack" style={{ gap: 6 }}>
-            <p className="q-text">{q.text}</p>
-            <p className="q-hint">{q.multiple ? 'Vyber všechny správné odpovědi.' : 'Vyber jednu odpověď.'}</p>
-          </div>
+          <h2 className="text-xl leading-snug font-semibold whitespace-pre-wrap sm:text-[1.4rem]">{q.text}</h2>
+          <p className="mt-2 text-sm text-muted-foreground">
+            {q.multiple ? 'Správných odpovědí je víc, označ všechny.' : 'Vyber jednu odpověď.'}
+          </p>
 
-          <div className="options" role={q.multiple ? 'group' : 'radiogroup'}>
+          <div className="mt-6 space-y-2.5" role={q.multiple ? 'group' : 'radiogroup'}>
             {answers.map((a, i) => {
               const on = selected.includes(a.id)
               return (
@@ -160,69 +208,101 @@ export default function TakeTest() {
                   type="button"
                   role={q.multiple ? 'checkbox' : 'radio'}
                   aria-checked={on}
-                  className={`option${on ? ' selected' : ''}`}
                   onClick={() => toggle(a.id)}
+                  className={cn(
+                    'group flex w-full items-start gap-3.5 rounded-xl border px-4 py-3.5 text-left transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none',
+                    on ? 'border-primary/60 bg-accent/50' : 'hover:border-foreground/20 hover:bg-muted/60',
+                  )}
                 >
-                  <span className={`mark ${q.multiple ? 'box' : 'radio'}`}>{on ? '✓' : ''}</span>
-                  <span className="letter">{LETTERS[i]}</span>
-                  <span className="otext">{a.text}</span>
+                  <span
+                    className={cn(
+                      'mt-px grid size-7 shrink-0 place-items-center border text-xs font-semibold transition-colors',
+                      q.multiple ? 'rounded-md' : 'rounded-full',
+                      on ? 'border-primary bg-primary text-primary-foreground' : 'text-muted-foreground group-hover:border-foreground/30',
+                    )}
+                  >
+                    {on && q.multiple ? <Check className="size-4" strokeWidth={3} /> : LETTERS[i]}
+                  </span>
+                  <span className="pt-0.5 leading-relaxed whitespace-pre-wrap">
+                    <span className="hl hl-anim" data-on={on}>{a.text}</span>
+                  </span>
                 </button>
               )
             })}
           </div>
 
-          <div className="row">
-            <button className="btn" onClick={() => go(progress.idx - 1)} disabled={progress.idx === 0}>← Předchozí</button>
-            <span className="spacer" />
-            {progress.idx < total - 1 ? (
-              <button className="btn primary" onClick={() => go(progress.idx + 1)}>Další →</button>
+          <div className="mt-8 flex items-center gap-2">
+            <Button variant="ghost" onClick={() => go(progress.idx - 1)} disabled={progress.idx === 0}>
+              <ArrowLeft /> Předchozí
+            </Button>
+            <span className="hidden flex-1 text-center text-xs text-muted-foreground sm:block">
+              Klávesy A–{LETTERS[Math.max(0, answers.length - 1)]} vybírají, šipky přepínají otázky
+            </span>
+            <span className="flex-1 sm:hidden" />
+            {isLast ? (
+              <Button size="lg" onClick={() => setConfirmOpen(true)}><Send /> Odevzdat test</Button>
             ) : (
-              <button className="btn primary" onClick={() => setConfirmOpen(true)}>Odevzdat test</button>
+              <Button size="lg" onClick={() => go(progress.idx + 1)}>Další <ArrowRight /></Button>
             )}
           </div>
-        </div>
+        </section>
 
-        <aside className="card take-side stack">
-          <div className="row">
-            <h3>Přehled</h3>
-            <span className="spacer" />
-            <span className="small muted">{answeredCount}/{total}</span>
+        <aside className="rounded-2xl border bg-card p-5 lg:sticky lg:top-[76px]">
+          <div className="mb-3 flex items-baseline justify-between">
+            <h3 className="font-semibold">Přehled</h3>
+            <span className="text-sm text-muted-foreground tabular-nums">{answeredCount} / {total}</span>
           </div>
-          <div className="q-grid">
-            {progress.order.map((qid, i) => (
-              <button
-                key={qid}
-                className={`q-dot${(progress.selected[qid] ?? []).length ? ' answered' : ''}${i === progress.idx ? ' current' : ''}`}
-                onClick={() => go(i)}
-                title={`Otázka ${i + 1} (#${qid})`}
-              >
-                {i + 1}
-              </button>
-            ))}
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(36px,1fr))] gap-1.5">
+            {progress.order.map((qid, i) => {
+              const answered = (progress.selected[qid] ?? []).length > 0
+              const current = i === progress.idx
+              return (
+                <button
+                  key={qid}
+                  onClick={() => go(i)}
+                  title={`Otázka ${i + 1}, ID ${qid}`}
+                  className={cn(
+                    'h-9 rounded-md text-xs font-semibold tabular-nums transition-colors',
+                    answered ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-accent',
+                    current && 'ring-2 ring-foreground ring-offset-2 ring-offset-card',
+                  )}
+                >
+                  {i + 1}
+                </button>
+              )
+            })}
           </div>
-          <p className="small muted">Rozpracovaný test se ukládá v prohlížeči, klidně ho zavři a vrať se později.</p>
+          <p className="mt-4 text-xs leading-relaxed text-muted-foreground">
+            Odpovědi se průběžně ukládají v tomhle prohlížeči, takže test můžeš zavřít a dokončit později.
+          </p>
         </aside>
       </div>
 
-      {confirmOpen && (
-        <Modal onClose={() => !submitting && setConfirmOpen(false)}>
-          <div className="stack" style={{ gap: 14 }}>
-            <h2>Odevzdat test?</h2>
-            {unanswered > 0 ? (
-              <div className="alert warn">
-                Nezodpověděl(a) jsi <b>{unanswered}</b> {unanswered === 1 ? 'otázku' : unanswered < 5 ? 'otázky' : 'otázek'}. Ty se počítají jako špatně.
-              </div>
-            ) : (
-              <p className="muted">Máš zodpovězené všechny otázky. Po odevzdání už odpovědi nejde změnit.</p>
-            )}
-            <div className="row">
-              <span className="spacer" />
-              <button className="btn" onClick={() => setConfirmOpen(false)} disabled={submitting}>Zpět k testu</button>
-              <button className="btn primary" onClick={submit} disabled={submitting}>{submitting ? 'Odevzdávám…' : 'Odevzdat'}</button>
-            </div>
-          </div>
-        </Modal>
-      )}
-    </div>
+      <AlertDialog open={confirmOpen} onOpenChange={(o) => !submitting && setConfirmOpen(o)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Odevzdat test?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {unanswered > 0
+                ? `Zbývá ti ${unanswered} ${plural(unanswered)} bez odpovědi. Ty se počítají jako špatně.`
+                : 'Máš zodpovězeno všechno. Po odevzdání už odpovědi nejde změnit.'}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={submitting}>Zpět k testu</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={submitting}
+              onClick={(e) => {
+                e.preventDefault()
+                submit()
+              }}
+            >
+              {submitting && <Loader2 className="animate-spin" />}
+              Odevzdat
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </Page>
   )
 }

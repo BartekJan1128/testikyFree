@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { supabase } from '../lib/supabase'
-import { useAuth } from '../lib/auth'
-import type { Attempt } from '../lib/types'
-import { errMsg, fmtDate, fmtDuration } from '../lib/format'
-import { Empty, ErrorBox, Score, Spinner } from '../components/ui'
+import { ChevronRight, History as HistoryIcon } from 'lucide-react'
+import { supabase } from '@/lib/supabase'
+import { useAuth } from '@/lib/auth'
+import type { Attempt } from '@/lib/types'
+import { errMsg, fmtDate, fmtDuration } from '@/lib/format'
+import { EmptyState, ErrorAlert, Loading, Page, PageHeader, Score } from '@/components/common'
+import { Button } from '@/components/ui/button'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 
 export default function History() {
   const { session } = useAuth()
@@ -25,42 +28,44 @@ export default function History() {
       })
   }, [session])
 
-  if (!rows) return <Spinner />
+  if (!rows) return <Loading />
 
   return (
-    <div className="container">
-      <div className="page-head">
-        <div>
-          <h1>Moje historie</h1>
-          <p className="sub">Otevři pokus a projdi si, kde jsi chyboval(a). Otázky lze hledat podle ID.</p>
-        </div>
-      </div>
-      <ErrorBox error={error} />
+    <Page>
+      <PageHeader title="Historie" description="Otevři pokus a projdi si chyby. Otázky v něm najdeš i podle ID." />
+      <ErrorAlert error={error} className="mb-6" />
       {rows.length === 0 ? (
-        <Empty title="Zatím žádné pokusy"><Link to="/">Spusť svůj první test →</Link></Empty>
+        <EmptyState icon={HistoryIcon} title="Zatím žádné pokusy" action={<Button asChild><Link to="/">Vybrat test</Link></Button>}>
+          Každý odevzdaný test se tady uloží i s tvými odpověďmi.
+        </EmptyState>
       ) : (
-        <div className="card" style={{ padding: 0 }}>
-          <div className="table-wrap">
-            <table className="table">
-              <thead>
-                <tr><th>Test</th><th>Výsledek</th><th>Správně</th><th>Čas</th><th>Datum</th><th /></tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr key={r.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/attempt/${r.id}`)}>
-                    <td><b>{r.test_title}</b></td>
-                    <td><Score pct={r.score_pct} /></td>
-                    <td>{r.correct_count}/{r.total_count}</td>
-                    <td className="muted">{fmtDuration(r.started_at, r.finished_at) ?? '–'}</td>
-                    <td className="muted">{fmtDate(r.finished_at)}</td>
-                    <td style={{ textAlign: 'right' }}><Link to={`/attempt/${r.id}`} className="btn sm" onClick={(e) => e.stopPropagation()}>Detail</Link></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+        <div className="overflow-hidden rounded-xl border bg-card">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="pl-5">Test</TableHead>
+                <TableHead className="text-right">Výsledek</TableHead>
+                <TableHead className="text-right">Správně</TableHead>
+                <TableHead className="hidden text-right sm:table-cell">Čas</TableHead>
+                <TableHead className="hidden md:table-cell">Odevzdáno</TableHead>
+                <TableHead className="w-10" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map((r) => (
+                <TableRow key={r.id} className="cursor-pointer" onClick={() => navigate(`/attempt/${r.id}`)}>
+                  <TableCell className="pl-5 font-medium">{r.test_title}</TableCell>
+                  <TableCell className="text-right"><Score pct={r.score_pct} /></TableCell>
+                  <TableCell className="text-right tabular-nums text-muted-foreground">{r.correct_count}/{r.total_count}</TableCell>
+                  <TableCell className="hidden text-right text-muted-foreground sm:table-cell">{fmtDuration(r.started_at, r.finished_at) ?? '–'}</TableCell>
+                  <TableCell className="hidden text-muted-foreground md:table-cell">{fmtDate(r.finished_at)}</TableCell>
+                  <TableCell className="pr-4 text-muted-foreground"><ChevronRight className="size-4" /></TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         </div>
       )}
-    </div>
+    </Page>
   )
 }

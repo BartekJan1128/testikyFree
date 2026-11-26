@@ -1,10 +1,15 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { supabase } from '../lib/supabase'
-import { useAuth } from '../lib/auth'
-import type { MyTest } from '../lib/types'
-import { errMsg, fmtDate } from '../lib/format'
-import { Empty, ErrorBox, Score, Spinner } from '../components/ui'
+import { BookOpen, Play, Trophy } from 'lucide-react'
+import { supabase } from '@/lib/supabase'
+import { useAuth } from '@/lib/auth'
+import type { MyTest } from '@/lib/types'
+import { errMsg, fmtDate, fmtPct } from '@/lib/format'
+import { EmptyState, ErrorAlert, Page, PageHeader, Score } from '@/components/common'
+import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
+
+const plural = (n: number, one: string, few: string, many: string) => (n === 1 ? one : n >= 2 && n <= 4 ? few : many)
 
 export default function Dashboard() {
   const { profile } = useAuth()
@@ -18,49 +23,79 @@ export default function Dashboard() {
     })
   }, [])
 
-  if (!tests) return <Spinner />
+  const done = tests?.filter((t) => t.attempts_count > 0) ?? []
+  const avgBest = done.length ? done.reduce((s, t) => s + Number(t.best_pct ?? 0), 0) / done.length : null
 
   return (
-    <div className="container">
-      <div className="page-head">
-        <div>
-          <h1>Ahoj{profile?.display_name ? `, ${profile.display_name}` : ''} 👋</h1>
-          <p className="sub">Vyber si test. Výsledek a správné odpovědi uvidíš po odevzdání.</p>
+    <Page>
+      <PageHeader
+        title={profile?.display_name ? `Ahoj, ${profile.display_name}` : 'Tvoje testy'}
+        description={
+          tests && tests.length > 0
+            ? avgBest != null
+              ? <>Máš za sebou {done.length} z {tests.length} testů, průměrně nejlépe na <span className="hl font-medium text-foreground">{fmtPct(avgBest)}</span>.</>
+              : 'Vyber si test. Výsledek uvidíš až po odevzdání.'
+            : undefined
+        }
+      />
+      <ErrorAlert error={error} className="mb-6" />
+
+      {!tests ? (
+        <div className="space-y-3">
+          {[0, 1, 2].map((i) => <Skeleton key={i} className="h-24 rounded-xl" />)}
         </div>
-      </div>
-      <ErrorBox error={error} />
-      {tests.length === 0 ? (
-        <Empty title="Zatím tu nemáš žádný test">
-          {profile?.is_admin ? (
-            <>Vytvoř první test v <Link to="/admin">administraci</Link>.</>
-          ) : (
-            <>Přístup k testům přiděluje admin. Napiš mu, ať ti nějaký zpřístupní.</>
-          )}
-        </Empty>
+      ) : tests.length === 0 ? (
+        <EmptyState
+          icon={BookOpen}
+          title="Zatím tu žádný test není"
+          action={profile?.is_admin ? <Button asChild><Link to="/admin">Vytvořit test</Link></Button> : undefined}
+        >
+          {profile?.is_admin ? 'Vytvoř první test a nahraj do něj otázky.' : 'Testy zpřístupňuje admin. Napiš mu, ať ti nějaký přidělí.'}
+        </EmptyState>
       ) : (
-        <div className="grid">
+        <div className="divide-y overflow-hidden rounded-xl border bg-card">
           {tests.map((t) => (
-            <div key={t.id} className="card test-card">
-              <h2>{t.title}</h2>
-              <p className="desc">{t.description || <span className="muted">Bez popisu</span>}</p>
-              <div className="stats">
-                <span><b>{t.question_count}</b> otázek</span>
-                <span>Nejlepší: <Score pct={t.best_pct} /></span>
-                <span><b>{t.attempts_count}</b>× vyplněno</span>
+            <div key={t.id} className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:gap-6">
+              <div className="min-w-0 flex-1">
+                <h2 className="text-lg font-semibold">{t.title}</h2>
+                {t.description && <p className="mt-0.5 line-clamp-2 text-sm text-muted-foreground">{t.description}</p>}
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {t.question_count} {plural(t.question_count, 'otázka', 'otázky', 'otázek')}
+                  {t.last_at && <span className="ml-3">naposledy {fmtDate(t.last_at)}</span>}
+                </p>
               </div>
-              {t.last_at && <span className="small muted">Naposledy {fmtDate(t.last_at)}</span>}
-              <div className="row">
-                {t.question_count > 0 ? (
-                  <Link to={`/test/${t.id}`} className="btn primary">Spustit test</Link>
+              <div className="flex items-center gap-6 sm:w-48 sm:justify-end">
+                {t.attempts_count > 0 ? (
+                  <div className="text-right">
+                    <div className="text-xs text-muted-foreground">Nejlepší</div>
+                    <Score pct={t.best_pct} className="text-xl" />
+                  </div>
                 ) : (
-                  <button className="btn" disabled>Zatím bez otázek</button>
+                  <span className="text-sm text-muted-foreground">Ještě nevyplněno</span>
                 )}
-                <Link to={`/leaderboard/${t.id}`} className="btn ghost">Žebříček</Link>
+                {t.attempts_count > 0 && (
+                  <div className="text-right">
+                    <div className="text-xs text-muted-foreground">Pokusů</div>
+                    <div className="text-xl font-semibold tabular-nums">{t.attempts_count}</div>
+                  </div>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <Button variant="ghost" size="icon" asChild aria-label="Žebříček">
+                  <Link to={`/leaderboard/${t.id}`} title="Žebříček"><Trophy /></Link>
+                </Button>
+                {t.question_count > 0 ? (
+                  <Button asChild size="lg">
+                    <Link to={`/test/${t.id}`}><Play /> {t.attempts_count ? 'Znovu' : 'Spustit'}</Link>
+                  </Button>
+                ) : (
+                  <Button size="lg" disabled variant="outline">Bez otázek</Button>
+                )}
               </div>
             </div>
           ))}
         </div>
       )}
-    </div>
+    </Page>
   )
 }

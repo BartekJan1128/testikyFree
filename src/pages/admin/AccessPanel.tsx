@@ -1,8 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
-import { supabase } from '../../lib/supabase'
-import type { Profile } from '../../lib/types'
-import { errMsg, fmtDate } from '../../lib/format'
-import { ErrorBox, SearchInput, Spinner } from '../../components/ui'
+import { toast } from 'sonner'
+import { supabase } from '@/lib/supabase'
+import type { Profile } from '@/lib/types'
+import { errMsg, fmtDate } from '@/lib/format'
+import { ErrorAlert, Loading, SearchField } from '@/components/common'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { Switch } from '@/components/ui/switch'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 
 const norm = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
 
@@ -33,13 +38,12 @@ export default function AccessPanel({ testId, onCountChange }: { testId: number;
 
   async function toggle(u: Profile) {
     setBusy(u.id)
-    setError(null)
     const has = granted.has(u.id)
     const { error } = has
       ? await supabase.from('test_access').delete().eq('test_id', testId).eq('user_id', u.id)
       : await supabase.from('test_access').insert({ test_id: testId, user_id: u.id })
     setBusy(null)
-    if (error) return setError(errMsg(error))
+    if (error) return toast.error(errMsg(error))
     setGranted((g) => {
       const n = new Set(g)
       if (has) n.delete(u.id)
@@ -52,62 +56,71 @@ export default function AccessPanel({ testId, onCountChange }: { testId: number;
     const targets = visible.filter((u) => !u.is_admin && granted.has(u.id) !== grant)
     if (!targets.length) return
     setBusy('bulk')
-    setError(null)
     const { error } = grant
       ? await supabase.from('test_access').insert(targets.map((u) => ({ test_id: testId, user_id: u.id })))
       : await supabase.from('test_access').delete().eq('test_id', testId).in('user_id', targets.map((u) => u.id))
     setBusy(null)
-    if (error) return setError(errMsg(error))
+    if (error) return toast.error(errMsg(error))
     setGranted((g) => {
       const n = new Set(g)
       targets.forEach((u) => (grant ? n.add(u.id) : n.delete(u.id)))
       return n
     })
+    toast.success(grant ? `Přístup přidán ${targets.length} uživatelům` : `Přístup odebrán ${targets.length} uživatelům`)
   }
 
-  if (!users) return <Spinner />
+  if (!users) return <Loading />
 
   return (
-    <div className="stack" style={{ gap: 14 }}>
-      <div className="row">
-        <SearchInput value={query} onChange={setQuery} placeholder="Hledat uživatele podle jména nebo e-mailu…" />
-        <button className="btn" disabled={busy !== null} onClick={() => bulk(true)}>Povolit {query ? 'vyfiltrovaným' : 'všem'}</button>
-        <button className="btn" disabled={busy !== null} onClick={() => bulk(false)}>Odebrat {query ? 'vyfiltrovaným' : 'všem'}</button>
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <SearchField value={query} onChange={setQuery} placeholder="Hledat podle jména nebo e-mailu" />
+        <Button variant="outline" disabled={busy !== null} onClick={() => bulk(true)}>Povolit {query ? 'nalezeným' : 'všem'}</Button>
+        <Button variant="ghost" disabled={busy !== null} onClick={() => bulk(false)}>Odebrat {query ? 'nalezeným' : 'všem'}</Button>
       </div>
-      <p className="small muted">Bez přístupu uživatel test nevidí ani ho nemůže spustit. Admini mají přístup ke všem testům automaticky.</p>
-      <ErrorBox error={error} />
-      <div className="card" style={{ padding: 0 }}>
-        <div className="table-wrap">
-          <table className="table">
-            <thead>
-              <tr><th>Uživatel</th><th>E-mail</th><th>Registrace</th><th style={{ textAlign: 'right' }}>Přístup</th></tr>
-            </thead>
-            <tbody>
-              {visible.map((u) => {
-                const on = u.is_admin || granted.has(u.id)
-                return (
-                  <tr key={u.id}>
-                    <td><b>{u.display_name || '—'}</b> {u.is_admin && <span className="badge accent">admin</span>}</td>
-                    <td className="muted">{u.email}</td>
-                    <td className="muted">{fmtDate(u.created_at)}</td>
-                    <td style={{ textAlign: 'right' }}>
-                      {u.is_admin ? (
-                        <span className="small muted">vždy</span>
-                      ) : (
-                        <button className={`chip-toggle${on ? ' on' : ''}`} disabled={busy !== null} onClick={() => toggle(u)}>
-                          {busy === u.id ? '…' : on ? '✓ Má přístup' : 'Povolit'}
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                )
-              })}
-              {visible.length === 0 && (
-                <tr><td colSpan={4} className="muted" style={{ textAlign: 'center', padding: 24 }}>Nikdo nenalezen.</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+      <p className="text-sm text-muted-foreground">Bez přístupu uživatel test neuvidí. Admini vidí všechny testy automaticky.</p>
+      <ErrorAlert error={error} />
+      <div className="overflow-hidden rounded-xl border bg-card">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="pl-5">Uživatel</TableHead>
+              <TableHead className="hidden md:table-cell">Registrace</TableHead>
+              <TableHead className="pr-5 text-right">Přístup</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {visible.map((u) => (
+              <TableRow key={u.id}>
+                <TableCell className="pl-5">
+                  <div className="font-medium">
+                    {u.display_name || 'Bez jména'}
+                    {u.is_admin && <Badge variant="secondary" className="ml-2">admin</Badge>}
+                  </div>
+                  <div className="text-xs text-muted-foreground">{u.email}</div>
+                </TableCell>
+                <TableCell className="hidden text-muted-foreground md:table-cell">{fmtDate(u.created_at)}</TableCell>
+                <TableCell className="pr-5 text-right">
+                  {u.is_admin ? (
+                    <span className="text-sm text-muted-foreground">vždy</span>
+                  ) : (
+                    <Switch
+                      checked={granted.has(u.id)}
+                      disabled={busy !== null}
+                      onCheckedChange={() => toggle(u)}
+                      aria-label={`Přístup pro ${u.display_name || u.email}`}
+                    />
+                  )}
+                </TableCell>
+              </TableRow>
+            ))}
+            {visible.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={3} className="py-10 text-center text-muted-foreground">Nikdo takový tu není.</TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
       </div>
     </div>
   )

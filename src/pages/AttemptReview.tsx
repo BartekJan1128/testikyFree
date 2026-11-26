@@ -1,13 +1,20 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { supabase } from '../lib/supabase'
-import { useAuth } from '../lib/auth'
-import type { Attempt, AttemptAnswer } from '../lib/types'
-import { errMsg, fmtDate, fmtDuration, scoreTone } from '../lib/format'
-import { isIdQuery, makeQuestionMatcher } from '../lib/search'
-import { Empty, ErrorBox, SearchInput, Spinner } from '../components/ui'
+import { Check, Lightbulb, Pencil, RotateCcw, SearchX, Trophy, X } from 'lucide-react'
+import { supabase } from '@/lib/supabase'
+import { useAuth } from '@/lib/auth'
+import type { Attempt, AttemptAnswer } from '@/lib/types'
+import { errMsg, fmtDate, fmtDuration, scoreTone } from '@/lib/format'
+import { isIdQuery, makeQuestionMatcher } from '@/lib/search'
+import { cn } from '@/lib/utils'
+import { EmptyState, ErrorAlert, Loading, Page, QuestionId, SearchField, Stat } from '@/components/common'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 
 type Filter = 'all' | 'wrong' | 'right'
+
+const tone = { good: 'text-success', mid: 'text-warning', bad: 'text-destructive', neutral: 'text-muted-foreground' }
 
 export default function AttemptReview() {
   const { id } = useParams()
@@ -25,7 +32,7 @@ export default function AttemptReview() {
         supabase.from('attempt_answers').select('*').eq('attempt_id', Number(id)).order('position'),
       ])
       if (a.error || b.error) return setError(errMsg(a.error || b.error))
-      if (!a.data) return setError('Pokus nenalezen, nebo k němu nemáš přístup.')
+      if (!a.data) return setError('Tenhle pokus neexistuje, nebo k němu nemáš přístup.')
       setAttempt(a.data as Attempt)
       setItems((b.data as AttemptAnswer[]) ?? [])
     })()
@@ -38,56 +45,72 @@ export default function AttemptReview() {
       matcher(it.question_id, it.question_text, ...it.answers.map((a) => a.text)),
   )
 
-  if (error) return <div className="container narrow"><ErrorBox error={error} /></div>
-  if (!attempt) return <Spinner />
+  if (error) return <Page narrow><ErrorAlert error={error} /></Page>
+  if (!attempt) return <Loading />
 
   const pct = Number(attempt.score_pct)
-  const tone = scoreTone(pct)
   const isOwn = attempt.user_id === session?.user.id
   const wrong = items.filter((i) => !i.is_correct).length
   const duration = fmtDuration(attempt.started_at, attempt.finished_at)
 
   return (
-    <div className="container narrow">
-      <div className="crumbs">
-        {isOwn ? <Link to="/history">Historie</Link> : <Link to={`/admin/tests/${attempt.test_id}`}>Administrace testu</Link>} / Výsledek
+    <Page narrow>
+      <div className="mb-3 text-sm text-muted-foreground">
+        {isOwn ? <Link to="/history" className="hover:text-foreground">Historie</Link> : <Link to={`/admin/tests/${attempt.test_id}?tab=results`} className="hover:text-foreground">Výsledky testu</Link>}
       </div>
 
-      <div className="card result-hero" style={{ marginBottom: 20 }}>
-        <div className={`ring ${tone}`} style={{ ['--p' as string]: pct }}>
-          <div>{Math.round(pct)} %</div>
-        </div>
-        <div className="stack" style={{ gap: 6, flex: 1, minWidth: 200 }}>
-          <h1>{attempt.test_title}</h1>
-          <p className="muted">
-            Správně <b style={{ color: 'var(--text)' }}>{attempt.correct_count}</b> z {attempt.total_count}
-            {duration && <> · čas {duration}</>} · {fmtDate(attempt.finished_at)}
+      <section className="mb-10 rounded-2xl border bg-card p-6 sm:p-8">
+        <h1 className="text-2xl font-bold sm:text-3xl">{attempt.test_title}</h1>
+        {!isOwn && (
+          <p className="mt-1 text-sm text-muted-foreground">
+            Vyplnil(a) <span className="font-medium text-foreground">{attempt.profiles?.display_name}</span> ({attempt.profiles?.email})
           </p>
-          {!isOwn && <p className="small">Uživatel: <b>{attempt.profiles?.display_name}</b> <span className="muted">({attempt.profiles?.email})</span></p>}
-          <div className="row" style={{ marginTop: 6 }}>
-            {attempt.test_id && isOwn && <Link className="btn primary sm" to={`/test/${attempt.test_id}`}>Zkusit znovu</Link>}
-            {attempt.test_id && <Link className="btn sm" to={`/leaderboard/${attempt.test_id}`}>Žebříček</Link>}
-            {profile?.is_admin && attempt.test_id && <Link className="btn ghost sm" to={`/admin/tests/${attempt.test_id}`}>Upravit test</Link>}
+        )}
+        <div className="mt-6 flex flex-wrap items-end gap-x-10 gap-y-6">
+          <div>
+            <div className={cn('font-heading text-6xl leading-none font-bold tabular-nums sm:text-7xl', tone[scoreTone(pct)])}>
+              <span className="hl">{Math.round(pct)}</span>
+              <span className="text-3xl sm:text-4xl"> %</span>
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-8 pb-1">
+            <Stat label="Správně">{attempt.correct_count} z {attempt.total_count}</Stat>
+            <Stat label="Čas">{duration ?? '–'}</Stat>
+            <Stat label="Odevzdáno">{fmtDate(attempt.finished_at)}</Stat>
           </div>
         </div>
-      </div>
-
-      <div className="row" style={{ marginBottom: 14 }}>
-        <SearchInput value={query} onChange={setQuery} placeholder="Hledat podle ID (#123, 12 15) nebo textu…" />
-        <div className="seg">
-          <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>Vše ({items.length})</button>
-          <button className={filter === 'wrong' ? 'active' : ''} onClick={() => setFilter('wrong')}>Chybné ({wrong})</button>
-          <button className={filter === 'right' ? 'active' : ''} onClick={() => setFilter('right')}>Správné ({items.length - wrong})</button>
+        <div className="mt-7 flex flex-wrap gap-2">
+          {attempt.test_id && isOwn && (
+            <Button asChild><Link to={`/test/${attempt.test_id}`}><RotateCcw /> Zkusit znovu</Link></Button>
+          )}
+          {attempt.test_id && (
+            <Button variant="outline" asChild><Link to={`/leaderboard/${attempt.test_id}`}><Trophy /> Žebříček</Link></Button>
+          )}
+          {profile?.is_admin && attempt.test_id && (
+            <Button variant="ghost" asChild><Link to={`/admin/tests/${attempt.test_id}`}><Pencil /> Upravit test</Link></Button>
+          )}
         </div>
+      </section>
+
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <SearchField value={query} onChange={setQuery} placeholder="Najít otázku podle ID nebo textu" />
+        <ToggleGroup type="single" variant="outline" value={filter} onValueChange={(v) => v && setFilter(v as Filter)}>
+          <ToggleGroupItem value="all" className="px-3">Vše {items.length}</ToggleGroupItem>
+          <ToggleGroupItem value="wrong" className="px-3">Chyby {wrong}</ToggleGroupItem>
+          <ToggleGroupItem value="right" className="px-3">Správně {items.length - wrong}</ToggleGroupItem>
+        </ToggleGroup>
       </div>
 
-      <div className="q-grid" style={{ marginBottom: 18 }}>
+      <div className="mb-8 flex flex-wrap gap-1">
         {items.map((it) => (
           <button
             key={it.id}
-            className={`q-dot ${it.is_correct ? 'good' : 'bad'}`}
-            title={`#${it.question_id}`}
+            title={`Otázka ${it.position}, ID ${it.question_id}`}
             onClick={() => document.getElementById(`r-${it.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
+            className={cn(
+              'size-8 rounded-md text-xs font-semibold tabular-nums transition-opacity hover:opacity-80',
+              it.is_correct ? 'bg-success-soft text-success' : 'bg-danger-soft text-destructive',
+            )}
           >
             {it.position}
           </button>
@@ -95,46 +118,73 @@ export default function AttemptReview() {
       </div>
 
       {visible.length === 0 ? (
-        <Empty title={isIdQuery(query) ? 'Otázka s tímto ID v testu není' : 'Nic nenalezeno'}>Zkus upravit hledání nebo filtr.</Empty>
+        <EmptyState icon={SearchX} title={isIdQuery(query) ? 'Otázka s tímhle ID v testu není' : 'Nic neodpovídá hledání'}>
+          Zkus jiné ID nebo přepni filtr.
+        </EmptyState>
       ) : (
-        <div className="stack" style={{ gap: 14 }}>
-          {visible.map((it) => (
-            <ReviewItem key={it.id} item={it} />
-          ))}
+        <div className="space-y-4">
+          {visible.map((it) => <ReviewItem key={it.id} item={it} own={isOwn} />)}
         </div>
       )}
-    </div>
+    </Page>
   )
 }
 
-function ReviewItem({ item }: { item: AttemptAnswer }) {
+function ReviewItem({ item, own }: { item: AttemptAnswer; own: boolean }) {
   const sel = new Set(item.selected_answer_ids.map(Number))
   return (
-    <div id={`r-${item.id}`} className={`card review-item ${item.is_correct ? 'ok' : 'ko'}`}>
-      <div className="row small" style={{ marginBottom: 8 }}>
-        <span className="muted">Otázka {item.position}</span>
-        <span className="qid">#{item.question_id}</span>
-        <span className="spacer" />
-        {item.is_correct ? <span className="badge good">✓ Správně</span> : <span className="badge bad">✗ Špatně</span>}
-        {sel.size === 0 && <span className="badge mid">Nezodpovězeno</span>}
+    <article id={`r-${item.id}`} className="scroll-mt-24 rounded-xl border bg-card p-5 sm:p-6">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <span
+          className={cn(
+            'grid size-6 place-items-center rounded-full',
+            item.is_correct ? 'bg-success text-background' : 'bg-destructive text-background',
+          )}
+          aria-label={item.is_correct ? 'Správně' : 'Špatně'}
+        >
+          {item.is_correct ? <Check className="size-3.5" strokeWidth={3} /> : <X className="size-3.5" strokeWidth={3} />}
+        </span>
+        <span className="text-sm font-medium">Otázka {item.position}</span>
+        <QuestionId id={item.question_id} />
+        {sel.size === 0 && <Badge variant="outline" className="text-warning">Bez odpovědi</Badge>}
       </div>
-      <p className="q-text" style={{ fontSize: '1.05rem' }}>{item.question_text}</p>
-      <div className="r-answers">
+      <p className="font-medium leading-relaxed whitespace-pre-wrap">{item.question_text}</p>
+      <ul className="mt-4 space-y-1.5">
         {item.answers.map((a) => {
           const picked = sel.has(a.id)
-          const cls = picked && a.is_correct ? 'hit' : picked ? 'wrong' : a.is_correct ? 'missed' : ''
-          const icon = picked && a.is_correct ? '✓' : picked ? '✗' : a.is_correct ? '✓' : ''
-          const tag = picked && a.is_correct ? 'tvoje · správně' : picked ? 'tvoje odpověď' : a.is_correct ? 'správná odpověď' : ''
+          const state = picked && a.is_correct ? 'hit' : picked ? 'wrong' : a.is_correct ? 'missed' : 'none'
           return (
-            <div key={a.id} className={`r-ans ${cls}`}>
-              <span className="icon">{icon}</span>
-              <span style={{ whiteSpace: 'pre-wrap' }}>{a.text}</span>
-              {tag && <span className="tag">{tag}</span>}
-            </div>
+            <li
+              key={a.id}
+              className={cn(
+                'flex items-start gap-3 rounded-lg border px-3 py-2 text-sm',
+                state === 'hit' && 'border-transparent bg-success-soft',
+                state === 'wrong' && 'border-transparent bg-danger-soft',
+                state === 'missed' && 'border-dashed border-success/60',
+                state === 'none' && 'text-muted-foreground',
+              )}
+            >
+              <span className="mt-0.5 w-4 shrink-0">
+                {state === 'hit' && <Check className="size-4 text-success" strokeWidth={2.5} />}
+                {state === 'wrong' && <X className="size-4 text-destructive" strokeWidth={2.5} />}
+                {state === 'missed' && <Check className="size-4 text-success/70" strokeWidth={2.5} />}
+              </span>
+              <span className="flex-1 whitespace-pre-wrap">{a.text}</span>
+              {state !== 'none' && (
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  {state === 'hit' ? (own ? 'tvoje, správně' : 'vybráno, správně') : state === 'wrong' ? (own ? 'tvoje odpověď' : 'vybráno') : 'správná odpověď'}
+                </span>
+              )}
+            </li>
           )
         })}
-      </div>
-      {item.explanation && <div className="explain">💡 {item.explanation}</div>}
-    </div>
+      </ul>
+      {item.explanation && (
+        <div className="mt-4 flex gap-2.5 rounded-lg bg-muted px-3.5 py-3 text-sm text-muted-foreground">
+          <Lightbulb className="mt-0.5 size-4 shrink-0" />
+          <p className="whitespace-pre-wrap">{item.explanation}</p>
+        </div>
+      )}
+    </article>
   )
 }

@@ -1,8 +1,17 @@
 import { useRef, useState } from 'react'
-import { supabase } from '../../lib/supabase'
-import { errMsg } from '../../lib/format'
-import { CSV_LONG_TEMPLATE, CSV_WIDE_TEMPLATE, JSON_TEMPLATE, parseAuto, type ParseResult } from '../../lib/importParser'
-import { ErrorBox } from '../../components/ui'
+import { CircleAlert, CircleCheck, Download, FileUp, Loader2, TriangleAlert } from 'lucide-react'
+import { toast } from 'sonner'
+import { supabase } from '@/lib/supabase'
+import { errMsg } from '@/lib/format'
+import { cn } from '@/lib/utils'
+import { CSV_LONG_TEMPLATE, CSV_WIDE_TEMPLATE, JSON_TEMPLATE, parseAuto, type ParseResult } from '@/lib/importParser'
+import { Confirm, ErrorAlert } from '@/components/common'
+import { Button } from '@/components/ui/button'
+import { Textarea } from '@/components/ui/textarea'
+import { Switch } from '@/components/ui/switch'
+import { Label } from '@/components/ui/label'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
 function download(name: string, content: string, type: string) {
   const blob = new Blob([type.includes('csv') ? '﻿' + content : content], { type })
@@ -13,6 +22,33 @@ function download(name: string, content: string, type: string) {
   a.click()
   URL.revokeObjectURL(url)
 }
+
+const FORMATS = [
+  {
+    key: 'json',
+    label: 'JSON',
+    file: 'sablona.json',
+    type: 'application/json',
+    body: JSON_TEMPLATE,
+    note: 'Odpovědi buď jako objekty s "correct": true/false, nebo jako pole textů a "correct": [1, 3] (pořadí od jedničky, jdou i písmena).',
+  },
+  {
+    key: 'wide',
+    label: 'CSV, řádek = otázka',
+    file: 'sablona-otazky.csv',
+    type: 'text/csv',
+    body: CSV_WIDE_TEMPLATE,
+    note: 'Sloupec correct obsahuje písmena správných sloupců, víc se odděluje čárkou (A,C). Tohle se v Excelu vyplňuje nejpohodlněji.',
+  },
+  {
+    key: 'long',
+    label: 'CSV, řádek = odpověď',
+    file: 'sablona-odpovedi.csv',
+    type: 'text/csv',
+    body: CSV_LONG_TEMPLATE,
+    note: 'Prázdná buňka v question znamená další odpověď k předchozí otázce. Správnost se píše jako 1/0, ano/ne nebo x.',
+  },
+]
 
 export default function ImportPanel({
   testId,
@@ -39,34 +75,33 @@ export default function ImportPanel({
     setError(null)
   }
 
-  async function readFile(f: File) {
-    analyze(await f.text(), f.name)
-  }
-
   async function doImport() {
     if (!result || result.errors.length || !result.questions.length) return
-    if (replace && existingCount > 0 && !confirm(`Smazat všech ${existingCount} stávajících otázek a nahradit je importem?`)) return
     setBusy(true)
     setError(null)
-    const { error } = await supabase.rpc('import_questions', {
-      p_test_id: testId,
-      p_questions: result.questions,
-      p_replace: replace,
-    })
+    const { error } = await supabase.rpc('import_questions', { p_test_id: testId, p_questions: result.questions, p_replace: replace })
     setBusy(false)
     if (error) return setError(errMsg(error))
+    toast.success(`Naimportováno ${result.questions.length} otázek`)
     setRaw('')
     setResult(null)
+    setFilename(undefined)
     await onImported()
   }
 
-  const ok = result && !result.errors.length && result.questions.length > 0
+  const ok = !!result && !result.errors.length && result.questions.length > 0
+  const importLabel = ok ? `Importovat ${result!.questions.length} otázek` : 'Importovat'
+  const importBtn = (
+    <Button disabled={!ok || busy} onClick={replace && existingCount > 0 ? undefined : doImport}>
+      {busy && <Loader2 className="animate-spin" />} {importLabel}
+    </Button>
+  )
 
   return (
-    <div className="stack" style={{ gap: 16 }}>
-      <div className="card stack" style={{ gap: 14 }}>
-        <div
-          className={`dropzone${over ? ' over' : ''}`}
+    <div className="grid items-start gap-6 lg:grid-cols-[1fr_380px]">
+      <div className="space-y-4">
+        <button
+          type="button"
           onClick={() => fileRef.current?.click()}
           onDragOver={(e) => {
             e.preventDefault()
@@ -77,13 +112,17 @@ export default function ImportPanel({
             e.preventDefault()
             setOver(false)
             const f = e.dataTransfer.files[0]
-            if (f) readFile(f)
+            if (f) f.text().then((t) => analyze(t, f.name))
           }}
+          className={cn(
+            'flex w-full flex-col items-center gap-2 rounded-xl border-2 border-dashed px-6 py-10 text-center transition-colors',
+            over ? 'border-primary bg-accent/50' : 'hover:border-foreground/25 hover:bg-muted/50',
+          )}
         >
-          <b>Přetáhni sem soubor .json nebo .csv</b>
-          <div className="small">nebo klikni a vyber ho · případně obsah vlož níže</div>
-          {filename && <div className="small" style={{ marginTop: 6 }}>Načteno: <span className="mono">{filename}</span></div>}
-        </div>
+          <FileUp className="size-6 text-muted-foreground" />
+          <span className="font-medium">{filename ? filename : 'Přetáhni sem soubor .json nebo .csv'}</span>
+          <span className="text-sm text-muted-foreground">{filename ? 'Klikni pro jiný soubor' : 'nebo klikni a vyber ho z počítače'}</span>
+        </button>
         <input
           ref={fileRef}
           type="file"
@@ -91,99 +130,126 @@ export default function ImportPanel({
           hidden
           onChange={(e) => {
             const f = e.target.files?.[0]
-            if (f) readFile(f)
+            if (f) f.text().then((t) => analyze(t, f.name))
             e.target.value = ''
           }}
         />
-        <textarea
-          className="input mono"
-          rows={8}
-          placeholder="…nebo sem vlož JSON / CSV"
+        <Textarea
+          rows={7}
+          placeholder="Nebo obsah vlož sem"
           value={raw}
           onChange={(e) => analyze(e.target.value)}
-          style={{ fontSize: '0.84rem' }}
+          className="font-mono text-xs"
         />
 
-        {result && (
-          <div className="stack" style={{ gap: 10 }}>
-            {result.errors.length > 0 && (
-              <div className="alert error">
-                <b>Import nelze provést:</b>
-                <ul>{result.errors.slice(0, 12).map((e, i) => <li key={i}>{e}</li>)}</ul>
-                {result.errors.length > 12 && <div>…a dalších {result.errors.length - 12}</div>}
-              </div>
-            )}
-            {result.warnings.length > 0 && (
-              <div className="alert warn">
-                <b>Upozornění</b> (import půjde, ale zkontroluj):
-                <ul>{result.warnings.slice(0, 8).map((e, i) => <li key={i}>{e}</li>)}</ul>
-                {result.warnings.length > 8 && <div>…a dalších {result.warnings.length - 8}</div>}
-              </div>
-            )}
-            {ok && (
-              <div className="alert success">
-                Rozpoznáno <b>{result.questions.length}</b> otázek,{' '}
-                {result.questions.reduce((s, q) => s + q.answers.length, 0)} odpovědí.
-              </div>
-            )}
-            {ok && (
-              <div className="stack" style={{ gap: 8 }}>
-                <b className="small">Náhled (prvních 5):</b>
-                {result.questions.slice(0, 5).map((q, i) => (
-                  <div key={i} className="card tight">
-                    <div className="qtext" style={{ fontWeight: 600 }}>{i + 1}. {q.text}</div>
-                    <div className="a-list" style={{ marginTop: 8 }}>
-                      {q.answers.map((a, j) => (
-                        <div key={j} className={`a-row${a.correct ? ' correct' : ''}`} style={{ padding: '4px 10px' }}>
-                          <span style={{ width: 18, fontWeight: 700, color: a.correct ? 'var(--good)' : 'var(--muted)' }}>{a.correct ? '✓' : '·'}</span>
-                          <span className="atext">{a.text}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
+        {result && result.errors.length > 0 && (
+          <Alert variant="destructive">
+            <CircleAlert />
+            <AlertTitle>Takhle to importovat nejde</AlertTitle>
+            <AlertDescription>
+              <ul className="list-disc pl-4">
+                {result.errors.slice(0, 10).map((e, i) => <li key={i}>{e}</li>)}
+              </ul>
+              {result.errors.length > 10 && <p>a dalších {result.errors.length - 10}</p>}
+            </AlertDescription>
+          </Alert>
+        )}
+        {result && result.warnings.length > 0 && (
+          <Alert className="border-warning/40 bg-warning-soft text-warning">
+            <TriangleAlert />
+            <AlertTitle>Zkontroluj před importem</AlertTitle>
+            <AlertDescription className="text-warning">
+              <ul className="list-disc pl-4">
+                {result.warnings.slice(0, 8).map((e, i) => <li key={i}>{e}</li>)}
+              </ul>
+              {result.warnings.length > 8 && <p>a dalších {result.warnings.length - 8}</p>}
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {ok && (
+          <div className="rounded-xl border bg-card">
+            <div className="flex items-center gap-2 border-b px-5 py-3 text-sm">
+              <CircleCheck className="size-4 text-success" />
+              <span>
+                Rozpoznáno <b>{result!.questions.length}</b> otázek a {result!.questions.reduce((s, q) => s + q.answers.length, 0)} odpovědí
+              </span>
+            </div>
+            <ol className="divide-y">
+              {result!.questions.slice(0, 5).map((q, i) => (
+                <li key={i} className="px-5 py-4">
+                  <p className="text-sm font-medium">{i + 1}. {q.text}</p>
+                  <ul className="mt-2 space-y-1">
+                    {q.answers.map((a, j) => (
+                      <li key={j} className={cn('flex items-center gap-2 text-sm', a.correct ? 'text-success' : 'text-muted-foreground')}>
+                        <span className="w-4 text-xs font-semibold">{String.fromCharCode(65 + j)}</span>
+                        <span className={cn(a.correct && 'font-medium')}>{a.text}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </li>
+              ))}
+            </ol>
+            {result!.questions.length > 5 && (
+              <p className="border-t px-5 py-3 text-xs text-muted-foreground">a dalších {result!.questions.length - 5} otázek</p>
             )}
           </div>
         )}
 
-        <ErrorBox error={error} />
+        <ErrorAlert error={error} />
 
-        <div className="row">
-          {existingCount > 0 && (
-            <label className="check">
-              <input type="checkbox" checked={replace} onChange={(e) => setReplace(e.target.checked)} />
-              Nahradit stávající otázky ({existingCount}) – jinak se nové přidají na konec
-            </label>
+        <div className="flex flex-wrap items-center gap-4 rounded-xl border bg-card px-5 py-4">
+          {existingCount > 0 ? (
+            <div className="flex items-center gap-3">
+              <Switch id="replace" checked={replace} onCheckedChange={setReplace} />
+              <Label htmlFor="replace" className="font-normal">
+                Nahradit současných {existingCount} otázek
+              </Label>
+            </div>
+          ) : (
+            <span className="text-sm text-muted-foreground">Test je zatím prázdný.</span>
           )}
-          <span className="spacer" />
-          <button className="btn primary" disabled={!ok || busy} onClick={doImport}>
-            {busy ? 'Importuji…' : ok ? `Importovat ${result!.questions.length} otázek` : 'Importovat'}
-          </button>
+          <div className="ml-auto">
+            {replace && existingCount > 0 ? (
+              <Confirm
+                trigger={importBtn}
+                title={`Nahradit ${existingCount} otázek?`}
+                description="Současné otázky se smažou a nahradí importem. Historie odevzdaných pokusů zůstane."
+                confirmLabel="Nahradit"
+                destructive
+                onConfirm={doImport}
+              />
+            ) : (
+              importBtn
+            )}
+          </div>
         </div>
       </div>
 
-      <div className="card stack" style={{ gap: 12 }}>
-        <h3>Formáty</h3>
-        <p className="small muted">
-          Jedna otázka může mít víc správných odpovědí. CSV může používat oddělovač <span className="mono">;</span>,{' '}
-          <span className="mono">,</span> nebo tabulátor (Excel → „Uložit jako CSV“). Hodnoty správnosti: <span className="mono">1 / ano / true / x</span>.
+      <aside className="rounded-xl border bg-card p-5 lg:sticky lg:top-[76px]">
+        <h3 className="font-semibold">Formát souboru</h3>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Otázka může mít víc správných odpovědí. CSV může mít oddělovač středník, čárku i tabulátor.
         </p>
-        <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))' }}>
-          <div className="stack" style={{ gap: 8 }}>
-            <div className="row"><b>JSON</b><span className="spacer" /><button className="btn sm" onClick={() => download('sablona.json', JSON_TEMPLATE, 'application/json')}>Stáhnout šablonu</button></div>
-            <pre className="code">{JSON_TEMPLATE}</pre>
-          </div>
-          <div className="stack" style={{ gap: 8 }}>
-            <div className="row"><b>CSV – řádek = otázka</b><span className="spacer" /><button className="btn sm" onClick={() => download('sablona-siroka.csv', CSV_WIDE_TEMPLATE, 'text/csv')}>Stáhnout</button></div>
-            <pre className="code">{CSV_WIDE_TEMPLATE}</pre>
-            <p className="small muted">Sloupec <span className="mono">correct</span> = písmena (nebo čísla) správných sloupců, např. <span className="mono">A,C</span>.</p>
-            <div className="row" style={{ marginTop: 8 }}><b>CSV – řádek = odpověď</b><span className="spacer" /><button className="btn sm" onClick={() => download('sablona-dlouha.csv', CSV_LONG_TEMPLATE, 'text/csv')}>Stáhnout</button></div>
-            <pre className="code">{CSV_LONG_TEMPLATE}</pre>
-            <p className="small muted">Prázdná buňka otázky = další odpověď k předchozí otázce.</p>
-          </div>
-        </div>
-      </div>
+        <Tabs defaultValue="wide" className="mt-4">
+          <TabsList className="w-full">
+            {FORMATS.map((f) => (
+              <TabsTrigger key={f.key} value={f.key} className="text-xs">
+                {f.key === 'json' ? 'JSON' : f.key === 'wide' ? 'CSV otázky' : 'CSV odpovědi'}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+          {FORMATS.map((f) => (
+            <TabsContent key={f.key} value={f.key} className="space-y-3">
+              <pre className="max-h-72 overflow-auto rounded-lg bg-muted p-3 font-mono text-[11px] leading-relaxed">{f.body}</pre>
+              <p className="text-xs leading-relaxed text-muted-foreground">{f.note}</p>
+              <Button variant="outline" size="sm" onClick={() => download(f.file, f.body, f.type)}>
+                <Download /> Stáhnout šablonu
+              </Button>
+            </TabsContent>
+          ))}
+        </Tabs>
+      </aside>
     </div>
   )
 }

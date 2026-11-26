@@ -1,17 +1,20 @@
 import type { ReactNode } from 'react'
 import { HashRouter, Navigate, Route, Routes } from 'react-router-dom'
-import { AuthProvider, useAuth } from './lib/auth'
-import Layout from './components/Layout'
-import { Spinner } from './components/ui'
-import AuthPage from './pages/AuthPage'
-import Dashboard from './pages/Dashboard'
-import TakeTest from './pages/TakeTest'
-import AttemptReview from './pages/AttemptReview'
-import History from './pages/History'
-import Leaderboard from './pages/Leaderboard'
-import AdminTests from './pages/admin/AdminTests'
-import AdminTestDetail from './pages/admin/AdminTestDetail'
-import AdminUsers from './pages/admin/AdminUsers'
+import { AuthProvider, useAuth } from '@/lib/auth'
+import { ThemeProvider } from '@/lib/theme'
+import Layout from '@/components/Layout'
+import { Loading } from '@/components/common'
+import { Toaster } from '@/components/ui/sonner'
+import { TooltipProvider } from '@/components/ui/tooltip'
+import AuthPage from '@/pages/AuthPage'
+import Dashboard from '@/pages/Dashboard'
+import TakeTest from '@/pages/TakeTest'
+import AttemptReview from '@/pages/AttemptReview'
+import History from '@/pages/History'
+import Leaderboard from '@/pages/Leaderboard'
+import AdminTests from '@/pages/admin/AdminTests'
+import AdminTestDetail from '@/pages/admin/AdminTestDetail'
+import AdminUsers from '@/pages/admin/AdminUsers'
 
 function AdminOnly({ children }: { children: ReactNode }) {
   const { profile } = useAuth()
@@ -21,7 +24,7 @@ function AdminOnly({ children }: { children: ReactNode }) {
 
 function Gate() {
   const { session, loading } = useAuth()
-  if (loading) return <Spinner label="Načítám…" />
+  if (loading) return <Loading />
   if (!session) return <AuthPage />
   return (
     <Layout>
@@ -42,10 +45,15 @@ function Gate() {
 
 export default function App() {
   return (
-    <HashRouter>
-      <AuthProvider>
-        <Gate />
-      </AuthProvider>
-    </HashRouter>
+    <ThemeProvider>
+      <TooltipProvider delayDuration={250}>
+        <HashRouter>
+          <AuthProvider>
+            <Gate />
+          </AuthProvider>
+        </HashRouter>
+        <Toaster position="bottom-right" />
+      </TooltipProvider>
+    </ThemeProvider>
   )
 }
