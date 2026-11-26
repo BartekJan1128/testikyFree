@@ -5,6 +5,7 @@ import { toast } from 'sonner'
 import { supabase } from '@/lib/supabase'
 import type { Test } from '@/lib/types'
 import { errMsg } from '@/lib/format'
+import { cleanupImages } from '@/lib/upload'
 import { ErrorAlert } from '@/components/common'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -78,6 +79,7 @@ export default function SettingsPanel({ test, onSaved }: { test: Test; onSaved: 
     setDeleting(false)
     if (error) return toast.error(errMsg(error))
     toast.success(`Test „${test.title}“ smazán`)
+    cleanupImages()
     navigate('/admin', { replace: true })
   }
 

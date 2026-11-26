@@ -5,6 +5,7 @@ import { toast } from 'sonner'
 import { supabase } from '@/lib/supabase'
 import type { Attempt } from '@/lib/types'
 import { errMsg, fmtDate, fmtDuration } from '@/lib/format'
+import { cleanupImages } from '@/lib/upload'
 import { Confirm, EmptyState, ErrorAlert, Loading, Score, Stat } from '@/components/common'
 import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -30,6 +31,7 @@ export default function ResultsPanel({ testId }: { testId: number }) {
     const { error } = await supabase.from('attempts').delete().eq('id', a.id)
     if (error) return toast.error(errMsg(error))
     setRows((r) => r && r.filter((x) => x.id !== a.id))
+    cleanupImages()
     toast.success('Pokus smazán')
   }
 

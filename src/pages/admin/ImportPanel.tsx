@@ -3,6 +3,7 @@ import { CircleAlert, CircleCheck, Download, FileUp, Loader2, TriangleAlert } fr
 import { toast } from 'sonner'
 import { supabase } from '@/lib/supabase'
 import { errMsg } from '@/lib/format'
+import { cleanupImages } from '@/lib/upload'
 import { cn } from '@/lib/utils'
 import { CSV_LONG_TEMPLATE, CSV_WIDE_TEMPLATE, JSON_TEMPLATE, parseAuto, type ParseResult } from '@/lib/importParser'
 import { Confirm, ErrorAlert } from '@/components/common'
@@ -85,6 +86,7 @@ export default function ImportPanel({
     const { error } = await supabase.rpc('import_questions', { p_test_id: testId, p_questions: result.questions, p_replace: replace })
     setBusy(false)
     if (error) return setError(errMsg(error))
+    if (replace) cleanupImages()
     toast.success(`Naimportováno ${result.questions.length} otázek`)
     setRaw('')
     setResult(null)

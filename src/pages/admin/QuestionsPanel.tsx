@@ -4,7 +4,7 @@ import { toast } from 'sonner'
 import { supabase } from '@/lib/supabase'
 import type { Answer, Question, QuestionType } from '@/lib/types'
 import { errMsg } from '@/lib/format'
-import { imageFromClipboard, imageMarkdown, uploadImage } from '@/lib/upload'
+import { cleanupImages, imageFromClipboard, imageMarkdown, uploadImage } from '@/lib/upload'
 import { isIdQuery, makeQuestionMatcher } from '@/lib/search'
 import { cn } from '@/lib/utils'
 import { Confirm, EmptyState, ErrorAlert, QuestionId, SearchField } from '@/components/common'
@@ -92,6 +92,7 @@ export default function QuestionsPanel({ testId, questions, setQuestions, onImpo
       setQuestions((list) => list && list.filter((x) => !done.has(x.id)))
     }
     setSelected(new Set())
+    cleanupImages()
     toast.success(`Smazáno ${ids.length} ${ids.length === 1 ? 'otázka' : ids.length < 5 ? 'otázky' : 'otázek'}`)
   }
 
@@ -339,6 +340,7 @@ function QuestionCard({
       q.answers.sort((a, b) => a.position - b.position || a.id - b.id)
       onSaved(q)
       setEditing(false)
+      cleanupImages()
       toast.success(isNew ? `Otázka přidána (ID ${q.id})` : `Otázka ID ${q.id} uložena`)
     } catch (e) {
       setError(errMsg(e))
@@ -351,6 +353,7 @@ function QuestionCard({
     if (!question) return
     const { error } = await supabase.from('questions').delete().eq('id', question.id)
     if (error) return toast.error(errMsg(error))
+    cleanupImages()
     toast.success(`Otázka ID ${question.id} smazána`)
     onDeleted?.()
   }

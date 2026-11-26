@@ -24,3 +24,23 @@ export function imageFromClipboard(e: React.ClipboardEvent): File | null {
   }
   return null
 }
+
+/**
+ * Smaže z úložiště obrázky, na které už nic neodkazuje (otázky, odpovědi, historie pokusů).
+ * Volá se na pozadí po mazání a ukládání; chyby se jen zalogují.
+ */
+export async function cleanupImages() {
+  try {
+    const { data, error } = await supabase.rpc('orphan_question_images')
+    if (error) throw error
+    const names = (data as string[] | null) ?? []
+    for (let i = 0; i < names.length; i += 100) {
+      const { error } = await supabase.storage.from(BUCKET).remove(names.slice(i, i + 100))
+      if (error) throw error
+    }
+    return names.length
+  } catch (e) {
+    console.warn('Úklid obrázků selhal', e)
+    return 0
+  }
+}

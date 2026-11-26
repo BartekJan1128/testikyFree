@@ -424,3 +424,25 @@ create policy question_images_admin_delete on storage.objects for delete to auth
 drop policy if exists question_images_admin_select on storage.objects;
 create policy question_images_admin_select on storage.objects for select to authenticated
   using (bucket_id = 'question-images' and public.is_admin());
+
+-- Úklid obrázků: vrátí soubory v bucketu, na které už nic neodkazuje
+-- (otázky, odpovědi ani snapshoty odevzdaných pokusů). Čerstvé soubory (< 1 h)
+-- se vynechají, aby se nesmazal obrázek vložený do ještě neuložené otázky.
+-- Samotné mazání dělá klient přes Storage API (přímé mazání z storage.objects Supabase nepovoluje).
+create or replace function public.orphan_question_images()
+returns setof text language plpgsql stable security definer set search_path = public, storage as $$
+begin
+  if not public.is_admin() then raise exception 'Pouze pro admina.'; end if;
+  return query
+    select o.name
+    from storage.objects o
+    where o.bucket_id = 'question-images'
+      and o.created_at < now() - interval '1 hour'
+      and not exists (select 1 from public.questions q where strpos(q.text, o.name) > 0 or strpos(q.explanation, o.name) > 0)
+      and not exists (select 1 from public.answers a where strpos(a.text, o.name) > 0 or strpos(coalesce(a.match_text, ''), o.name) > 0)
+      and not exists (select 1 from public.attempt_answers aa
+                      where strpos(aa.question_text, o.name) > 0 or strpos(aa.explanation, o.name) > 0 or strpos(aa.answers::text, o.name) > 0);
+end;
+$$;
+revoke execute on function public.orphan_question_images() from anon, public;
+grant execute on function public.orphan_question_images() to authenticated;
