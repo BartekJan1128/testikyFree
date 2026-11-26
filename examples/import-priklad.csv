@@ -1,0 +1,16 @@
+﻿question;type;A;B;C;D;E;F;correct;explanation
+Který protokol šifruje vzdálenou správu zařízení?;single;Telnet;SSH;HTTP;TFTP;;;B;Telnet posílá vše včetně hesla čitelně.
+Které dvě vlastnosti patří do CIA triády? (Vyber dvě.);multiple;Důvěrnost;Rychlost;Integrita;Anonymita;;;A,C;
+"Refer to the exhibit. Která služba na routeru běží?
+```
+R1# show ip ssh
+SSH Enabled - version 2.0
+Authentication timeout: 120 secs
+```";single;Telnet;SSH;HTTP server;SNMP;;;B;Výpis `show ip ssh` ukazuje zapnutý **SSH server**.
+"Refer to the exhibit. Které zařízení na schématu je firewall?
+![](https://bgtkujjukxdkiuuwtjth.supabase.co/storage/v1/object/public/question-images/schema-site.png)";single;Zařízení 1;Zařízení 2;Zařízení 3;;;;B;
+Přiřaď službu k výchozímu portu.;match;SSH => 22;DNS => 53;HTTPS => 443;NTP => 123;8080;;;8080 je matoucí možnost navíc.
+"Přiřaď příkaz k jeho účelu.
+```cisco
+R1(config)# ...
+```";match;`ip ssh version 2` => Vynutí SSH verze 2;`service password-encryption` => Zašifruje hesla v konfiguraci;`login block-for 60 attempts 3 within 30` => Zablokuje přihlášení po neúspěšných pokusech;;;;;
