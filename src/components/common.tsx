@@ -17,8 +17,9 @@ import {
 } from '@/components/ui/alert-dialog'
 import { CircleAlert } from 'lucide-react'
 
-export function Page({ children, narrow, className }: { children: ReactNode; narrow?: boolean; className?: string }) {
-  return <div className={cn('mx-auto w-full px-4 pt-8 pb-20 sm:px-6', narrow ? 'max-w-3xl' : 'max-w-6xl', className)}>{children}</div>
+/** Jednotná šířka všech stránek. */
+export function Page({ children, className }: { children: ReactNode; className?: string }) {
+  return <div className={cn('mx-auto w-full px-4 pt-8 pb-20 sm:px-6', 'max-w-6xl', className)}>{children}</div>
 }
 
 export function PageHeader({

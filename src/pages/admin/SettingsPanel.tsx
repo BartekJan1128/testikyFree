@@ -84,7 +84,7 @@ export default function SettingsPanel({ test, onSaved }: { test: Test; onSaved: 
   }
 
   return (
-    <div className="max-w-2xl space-y-8">
+    <div className="space-y-8">
       <section className="rounded-xl border bg-card p-5 sm:p-6">
         <div className="space-y-5">
           <div className="space-y-2">

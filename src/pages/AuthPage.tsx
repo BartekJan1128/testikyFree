@@ -51,7 +51,7 @@ function DemoQuestion() {
             >
               {String.fromCharCode(65 + i)}
             </span>
-            <span className="hl hl-anim" data-on={picked === i}>{a}</span>
+            <span className={cn(picked === i && 'font-medium')}>{a}</span>
           </button>
         ))}
       </div>

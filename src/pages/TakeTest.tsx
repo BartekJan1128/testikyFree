@@ -149,7 +149,7 @@ export default function TakeTest() {
 
   if (error && !test)
     return (
-      <Page narrow className="space-y-4">
+      <Page className="space-y-4">
         <ErrorAlert error={error} />
         <Button variant="outline" asChild><Link to="/"><ArrowLeft /> Zpět na testy</Link></Button>
       </Page>

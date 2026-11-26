@@ -7,7 +7,7 @@ import type { Attempt, AttemptAnswer } from '@/lib/types'
 import { errMsg, fmtDate, fmtDuration, scoreTone } from '@/lib/format'
 import { isIdQuery, makeQuestionMatcher } from '@/lib/search'
 import { cn } from '@/lib/utils'
-import { EmptyState, ErrorAlert, Loading, Page, QuestionId, SearchField, Stat } from '@/components/common'
+import { EmptyState, ErrorAlert, Loading, Page, QuestionId, SearchField } from '@/components/common'
 import { RichText } from '@/components/RichText'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -46,41 +46,63 @@ export default function AttemptReview() {
       matcher(it.question_id, it.question_text, ...it.answers.map((a) => `${a.text} ${a.match_text ?? ''}`)),
   )
 
-  if (error) return <Page narrow><ErrorAlert error={error} /></Page>
+  if (error) return <Page><ErrorAlert error={error} /></Page>
   if (!attempt) return <Loading />
 
   const pct = Number(attempt.score_pct)
   const isOwn = attempt.user_id === session?.user.id
   const wrong = items.filter((i) => !i.is_correct).length
+  const right = items.length - wrong
   const duration = fmtDuration(attempt.started_at, attempt.finished_at)
 
+  function jumpTo(it: AttemptAnswer) {
+    const go = () => document.getElementById(`r-${it.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    if (!visible.some((v) => v.id === it.id)) {
+      setFilter('all')
+      setQuery('')
+      setTimeout(go, 50)
+    } else go()
+  }
+
   return (
-    <Page narrow>
+    <Page>
       <div className="mb-3 text-sm text-muted-foreground">
         {isOwn ? <Link to="/history" className="hover:text-foreground">Historie</Link> : <Link to={`/admin/tests/${attempt.test_id}?tab=results`} className="hover:text-foreground">Výsledky testu</Link>}
       </div>
 
-      <section className="mb-10 rounded-2xl border bg-card p-6 sm:p-8">
-        <h1 className="text-2xl font-bold sm:text-3xl">{attempt.test_title}</h1>
-        {!isOwn && (
-          <p className="mt-1 text-sm text-muted-foreground">
-            Vyplnil(a) <span className="font-medium text-foreground">{attempt.profiles?.display_name}</span> ({attempt.profiles?.email})
-          </p>
-        )}
-        <div className="mt-6 flex flex-wrap items-end gap-x-10 gap-y-6">
-          <div>
-            <div className={cn('font-heading text-6xl leading-none font-bold tabular-nums sm:text-7xl', tone[scoreTone(pct)])}>
-              <span className="hl">{Math.round(pct)}</span>
-              <span className="text-3xl sm:text-4xl"> %</span>
-            </div>
+      <section className="mb-6 rounded-2xl border bg-card p-5 sm:p-7">
+        <div className="flex flex-wrap items-start justify-between gap-6">
+          <div className="min-w-0">
+            <h1 className="text-2xl font-bold sm:text-3xl">{attempt.test_title}</h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {!isOwn && (
+                <>
+                  <span className="font-medium text-foreground">{attempt.profiles?.display_name}</span> ({attempt.profiles?.email}),{' '}
+                </>
+              )}
+              odevzdáno {fmtDate(attempt.finished_at)}
+              {duration && <>, čas {duration}</>}
+            </p>
           </div>
-          <div className="grid grid-cols-3 gap-8 pb-1">
-            <Stat label="Správně">{attempt.correct_count} z {attempt.total_count}</Stat>
-            <Stat label="Čas">{duration ?? '–'}</Stat>
-            <Stat label="Odevzdáno">{fmtDate(attempt.finished_at)}</Stat>
+          <div className={cn('font-heading text-5xl leading-none font-bold tabular-nums sm:text-6xl', tone[scoreTone(pct)])}>
+            {Math.round(pct)}
+            <span className="ml-1 text-2xl sm:text-3xl">%</span>
           </div>
         </div>
-        <div className="mt-7 flex flex-wrap gap-2">
+
+        <div className="mt-6">
+          <div className="flex h-2.5 overflow-hidden rounded-full bg-muted">
+            <div className="bg-success" style={{ width: `${items.length ? (right / items.length) * 100 : 0}%` }} />
+            <div className="bg-destructive/80" style={{ width: `${items.length ? (wrong / items.length) * 100 : 0}%` }} />
+          </div>
+          <div className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-sm">
+            <span className="inline-flex items-center gap-1.5"><span className="size-2.5 rounded-full bg-success" /> Správně <b className="tabular-nums">{right}</b></span>
+            <span className="inline-flex items-center gap-1.5"><span className="size-2.5 rounded-full bg-destructive/80" /> Špatně <b className="tabular-nums">{wrong}</b></span>
+            <span className="text-muted-foreground">z {attempt.total_count} otázek</span>
+          </div>
+        </div>
+
+        <div className="mt-6 flex flex-wrap gap-2">
           {attempt.test_id && isOwn && (
             <Button asChild><Link to={`/test/${attempt.test_id}`}><RotateCcw /> Zkusit znovu</Link></Button>
           )}
@@ -93,40 +115,50 @@ export default function AttemptReview() {
         </div>
       </section>
 
-      <div className="mb-4 flex flex-wrap items-center gap-3">
-        <SearchField value={query} onChange={setQuery} placeholder="Najít otázku podle ID nebo textu" />
-        <ToggleGroup type="single" variant="outline" value={filter} onValueChange={(v) => v && setFilter(v as Filter)}>
-          <ToggleGroupItem value="all" className="px-3">Vše {items.length}</ToggleGroupItem>
-          <ToggleGroupItem value="wrong" className="px-3">Chyby {wrong}</ToggleGroupItem>
-          <ToggleGroupItem value="right" className="px-3">Správně {items.length - wrong}</ToggleGroupItem>
-        </ToggleGroup>
-      </div>
+      <div className="grid items-start gap-6 lg:grid-cols-[1fr_272px]">
+        <div className="min-w-0">
+          <div className="sticky top-14 z-20 -mx-1 mb-4 flex flex-wrap items-center gap-3 bg-background/90 px-1 py-2 backdrop-blur">
+            <SearchField value={query} onChange={setQuery} placeholder="Najít otázku podle ID nebo textu" />
+            <ToggleGroup type="single" variant="outline" value={filter} onValueChange={(v) => v && setFilter(v as Filter)}>
+              <ToggleGroupItem value="all" className="px-3">Vše {items.length}</ToggleGroupItem>
+              <ToggleGroupItem value="wrong" className="px-3">Chyby {wrong}</ToggleGroupItem>
+              <ToggleGroupItem value="right" className="px-3">Správně {right}</ToggleGroupItem>
+            </ToggleGroup>
+          </div>
 
-      <div className="mb-8 flex flex-wrap gap-1">
-        {items.map((it) => (
-          <button
-            key={it.id}
-            title={`Otázka ${it.position}, ID ${it.question_id}`}
-            onClick={() => document.getElementById(`r-${it.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
-            className={cn(
-              'size-8 rounded-md text-xs font-semibold tabular-nums transition-opacity hover:opacity-80',
-              it.is_correct ? 'bg-success-soft text-success' : 'bg-danger-soft text-destructive',
-            )}
-          >
-            {it.position}
-          </button>
-        ))}
-      </div>
-
-      {visible.length === 0 ? (
-        <EmptyState icon={SearchX} title={isIdQuery(query) ? 'Otázka s tímhle ID v testu není' : 'Nic neodpovídá hledání'}>
-          Zkus jiné ID nebo přepni filtr.
-        </EmptyState>
-      ) : (
-        <div className="space-y-4">
-          {visible.map((it) => <ReviewItem key={it.id} item={it} own={isOwn} />)}
+          {visible.length === 0 ? (
+            <EmptyState icon={SearchX} title={isIdQuery(query) ? 'Otázka s tímhle ID v testu není' : 'Nic neodpovídá hledání'}>
+              Zkus jiné ID nebo přepni filtr.
+            </EmptyState>
+          ) : (
+            <div className="space-y-4">
+              {visible.map((it) => <ReviewItem key={it.id} item={it} own={isOwn} />)}
+            </div>
+          )}
         </div>
-      )}
+
+        <aside className="hidden rounded-2xl border bg-card p-5 lg:sticky lg:top-[76px] lg:block">
+          <div className="mb-3 flex items-baseline justify-between">
+            <h3 className="font-semibold">Přehled</h3>
+            <span className="text-sm text-muted-foreground tabular-nums">{right} / {items.length}</span>
+          </div>
+          <div className="grid max-h-[calc(100vh-200px)] grid-cols-[repeat(auto-fill,minmax(36px,1fr))] gap-1.5 overflow-y-auto pr-1">
+            {items.map((it) => (
+              <button
+                key={it.id}
+                title={`Otázka ${it.position}, ID ${it.question_id}`}
+                onClick={() => jumpTo(it)}
+                className={cn(
+                  'h-9 rounded-md text-xs font-semibold tabular-nums transition-opacity hover:opacity-80',
+                  it.is_correct ? 'bg-success-soft text-success' : 'bg-danger-soft text-destructive',
+                )}
+              >
+                {it.position}
+              </button>
+            ))}
+          </div>
+        </aside>
+      </div>
     </Page>
   )
 }
@@ -162,22 +194,34 @@ function ReviewItem({ item, own }: { item: AttemptAnswer; own: boolean }) {
             <li
               key={a.id}
               className={cn(
-                'flex items-start gap-3 rounded-lg border px-3 py-2 text-sm',
-                state === 'hit' && 'border-transparent bg-success-soft',
-                state === 'wrong' && 'border-transparent bg-danger-soft',
-                state === 'missed' && 'border-dashed border-success/60',
+                'flex items-start gap-3 rounded-lg border px-3 py-2.5 text-sm',
+                (state === 'hit' || state === 'missed') && 'border-success/50 bg-success-soft font-medium',
+                state === 'wrong' && 'border-destructive/40 bg-danger-soft',
                 state === 'none' && 'text-muted-foreground',
               )}
             >
-              <span className="mt-0.5 w-4 shrink-0">
-                {state === 'hit' && <Check className="size-4 text-success" strokeWidth={2.5} />}
-                {state === 'wrong' && <X className="size-4 text-destructive" strokeWidth={2.5} />}
-                {state === 'missed' && <Check className="size-4 text-success/70" strokeWidth={2.5} />}
+              <span
+                className={cn(
+                  'mt-px grid size-5 shrink-0 place-items-center rounded-full',
+                  (state === 'hit' || state === 'missed') && 'bg-success text-background',
+                  state === 'wrong' && 'bg-destructive text-background',
+                  state === 'none' && 'border',
+                )}
+              >
+                {(state === 'hit' || state === 'missed') && <Check className="size-3.5" strokeWidth={3} />}
+                {state === 'wrong' && <X className="size-3.5" strokeWidth={3} />}
               </span>
               <RichText as="span" text={a.text} className="min-w-0 flex-1" />
               {state !== 'none' && (
-                <span className="shrink-0 text-xs text-muted-foreground">
-                  {state === 'hit' ? (own ? 'tvoje, správně' : 'vybráno, správně') : state === 'wrong' ? (own ? 'tvoje odpověď' : 'vybráno') : 'správná odpověď'}
+                <span
+                  className={cn(
+                    'shrink-0 rounded-full px-2 py-0.5 text-xs font-medium',
+                    state === 'hit' && 'bg-success text-background',
+                    state === 'missed' && 'border border-success/60 text-success',
+                    state === 'wrong' && 'bg-destructive text-background',
+                  )}
+                >
+                  {state === 'hit' ? (own ? 'Tvoje, správně' : 'Vybráno, správně') : state === 'wrong' ? (own ? 'Tvoje, špatně' : 'Vybráno, špatně') : 'Správná odpověď'}
                 </span>
               )}
             </li>

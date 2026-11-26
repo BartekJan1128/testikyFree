@@ -33,7 +33,7 @@ export default function Dashboard() {
         description={
           tests && tests.length > 0
             ? avgBest != null
-              ? <>Máš za sebou {done.length} z {tests.length} testů, průměrně nejlépe na <span className="hl font-medium text-foreground">{fmtPct(avgBest)}</span>.</>
+              ? <>Máš za sebou {done.length} z {tests.length} testů, průměrně nejlépe na <span className="font-medium text-foreground">{fmtPct(avgBest)}</span>.</>
               : 'Vyber si test. Výsledek uvidíš až po odevzdání.'
             : undefined
         }

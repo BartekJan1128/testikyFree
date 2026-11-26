@@ -43,7 +43,7 @@ export default function Leaderboard() {
   if (!rows) return <Loading />
 
   return (
-    <Page narrow>
+    <Page>
       <PageHeader
         back={<Link to="/" className="hover:text-foreground">Testy</Link>}
         title={title ? `Žebříček: ${title}` : 'Žebříček'}
@@ -74,7 +74,7 @@ export default function Leaderboard() {
                       <span
                         className={cn(
                           'font-heading inline-grid size-8 place-items-center rounded-full text-sm font-bold tabular-nums',
-                          i === 0 ? 'bg-highlight text-highlight-foreground' : i < 3 ? 'bg-muted text-foreground' : 'text-muted-foreground',
+                          i === 0 ? 'bg-primary text-primary-foreground' : i < 3 ? 'bg-muted text-foreground' : 'text-muted-foreground',
                         )}
                       >
                         {i + 1}
