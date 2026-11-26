@@ -158,6 +158,21 @@ export default function ImportPanel({
             </AlertDescription>
           </Alert>
         )}
+        {result && result.skipped.length > 0 && (
+          <Alert className="border-warning/40 bg-warning-soft text-warning">
+            <TriangleAlert />
+            <AlertTitle>
+              {result.skipped.length === 1 ? '1 otázka se přeskočí' : `${result.skipped.length} otázek se přeskočí`}
+            </AlertTitle>
+            <AlertDescription className="text-warning">
+              <ul className="list-disc pl-4">
+                {result.skipped.slice(0, 15).map((e, i) => <li key={i}>{e}</li>)}
+              </ul>
+              {result.skipped.length > 15 && <p>a dalších {result.skipped.length - 15}</p>}
+              <p className="mt-1">Ostatní otázky se naimportují. Přeskočené můžeš opravit v souboru, nebo je přidat ručně v editoru.</p>
+            </AlertDescription>
+          </Alert>
+        )}
         {result && result.warnings.length > 0 && (
           <Alert className="border-warning/40 bg-warning-soft text-warning">
             <TriangleAlert />

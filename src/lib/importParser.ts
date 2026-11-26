@@ -1,7 +1,12 @@
 import Papa from 'papaparse'
 import type { ImportQuestion, QuestionType } from './types'
 
-export type ParseResult = { questions: ImportQuestion[]; errors: string[]; warnings: string[] }
+/**
+ * errors   – blokují celý import (rozbitý soubor, chybí hlavička)
+ * skipped  – jednotlivé neplatné otázky, které se při importu přeskočí
+ * warnings – otázky se naimportují, ale stojí za kontrolu
+ */
+export type ParseResult = { questions: ImportQuestion[]; errors: string[]; warnings: string[]; skipped: string[] }
 
 const TRUTHY = new Set(['1', 'true', 'ano', 'a', 'yes', 'y', 'x', '✓', '✔', 'správně', 'spravne', 'správná', 'spravna', 'ok'])
 const isTruthy = (v: unknown) =>
@@ -46,23 +51,30 @@ function addCell(q: ImportQuestion, cell: string, correct: boolean) {
   } else q.answers.push({ text: cell, correct })
 }
 
-function validate(questions: ImportQuestion[], errors: string[], warnings: string[]) {
+/** Vrátí jen platné otázky; neplatné popíše do skipped. */
+function validate(questions: ImportQuestion[], warnings: string[], skipped: string[]): ImportQuestion[] {
+  const valid: ImportQuestion[] = []
   questions.forEach((q, i) => {
-    const label = `Otázka ${i + 1}`
-    if (!q.text.trim()) errors.push(`${label}: chybí text otázky.`)
+    const label = `Otázka ${i + 1}${q.text ? ` („${q.text.slice(0, 50)}${q.text.length > 50 ? '…' : ''}“)` : ''}`
+    const problems: string[] = []
+    if (!q.text.trim()) problems.push('chybí text otázky')
     if (q.type === 'match') {
-      if (q.pairs.length < 2) errors.push(`${label} (přiřazování): potřebuje aspoň 2 dvojice ve tvaru "položka ${PAIR_SEP} možnost".`)
-      q.pairs.forEach((p, j) => {
-        if (!p.left || !p.right) errors.push(`${label}, dvojice ${j + 1}: obě strany kolem "${PAIR_SEP}" musí mít text.`)
-      })
+      if (q.pairs.length < 2) problems.push(`přiřazování potřebuje aspoň 2 dvojice „položka ${PAIR_SEP} možnost“`)
+      if (q.pairs.some((p) => !p.left || !p.right)) problems.push(`některá dvojice nemá text na obou stranách „${PAIR_SEP}“`)
     } else {
-      if (q.answers.length < 2) warnings.push(`${label}: má méně než 2 odpovědi.`)
-      if (!q.answers.some((a) => a.correct)) warnings.push(`${label}: nemá žádnou správnou odpověď.`)
-      q.answers.forEach((a, j) => {
-        if (!a.text.trim()) errors.push(`${label}, odpověď ${j + 1}: prázdný text.`)
-      })
+      if (q.answers.length === 0) problems.push('nemá žádné odpovědi')
     }
+    if (problems.length) {
+      skipped.push(`${label}: ${problems.join(', ')}.`)
+      return
+    }
+    if (q.type === 'choice') {
+      if (q.answers.length < 2) warnings.push(`${label}: má jen jednu odpověď.`)
+      if (!q.answers.some((a) => a.correct)) warnings.push(`${label}: nemá označenou správnou odpověď.`)
+    }
+    valid.push(q)
   })
+  return valid
 }
 
 // ---------------------------------------------------------------- JSON
@@ -84,12 +96,12 @@ export function parseJson(input: string): ParseResult {
   try {
     data = JSON.parse(input)
   } catch (e) {
-    return { questions: [], errors: [`Neplatný JSON: ${(e as Error).message}`], warnings }
+    return { skipped: [], questions: [], errors: [`Neplatný JSON: ${(e as Error).message}`], warnings }
   }
   if (data && typeof data === 'object' && !Array.isArray(data) && Array.isArray((data as { questions?: unknown }).questions)) {
     data = (data as { questions: unknown[] }).questions
   }
-  if (!Array.isArray(data)) return { questions: [], errors: ['JSON musí být pole otázek (nebo objekt s klíčem "questions").'], warnings }
+  if (!Array.isArray(data)) return { skipped: [], questions: [], errors: ['JSON musí být pole otázek (nebo objekt s klíčem "questions").'], warnings }
 
   const questions: ImportQuestion[] = []
   data.forEach((raw, i) => {
@@ -137,8 +149,9 @@ export function parseJson(input: string): ParseResult {
     }
     questions.push(q)
   })
-  validate(questions, errors, warnings)
-  return { questions, errors, warnings }
+  const skipped: string[] = []
+  const valid = validate(questions, warnings, skipped)
+  return { questions: valid, errors, warnings, skipped }
 }
 
 // ---------------------------------------------------------------- CSV
@@ -160,7 +173,7 @@ export function parseCsv(input: string): ParseResult {
   const parsed = Papa.parse<string[]>(input.replace(/^﻿/, ''), { skipEmptyLines: 'greedy' })
   parsed.errors.slice(0, 5).forEach((e) => errors.push(`CSV řádek ${(e.row ?? 0) + 1}: ${e.message}`))
   const rows = parsed.data
-  if (rows.length < 2) return { questions: [], errors: [...errors, 'CSV musí mít hlavičku a aspoň jeden řádek.'], warnings }
+  if (rows.length < 2) return { skipped: [], questions: [], errors: [...errors, 'CSV musí mít hlavičku a aspoň jeden řádek.'], warnings }
 
   const header = rows[0].map((h) => norm(String(h)))
   const find = (keys: string[]) => header.findIndex((h) => keys.includes(h))
@@ -169,7 +182,7 @@ export function parseCsv(input: string): ParseResult {
   const ci = find(C_KEYS)
   const ei = find(E_KEYS)
   const ti = find(T_KEYS)
-  if (qi < 0) return { questions: [], errors: [...errors, 'V hlavičce chybí sloupec "question" (nebo "otazka").'], warnings }
+  if (qi < 0) return { skipped: [], questions: [], errors: [...errors, 'V hlavičce chybí sloupec "question" (nebo "otazka").'], warnings }
 
   const cell = (r: string[], i: number) => (i >= 0 ? String(r[i] ?? '').trim() : '')
   const questions: ImportQuestion[] = []
@@ -197,16 +210,22 @@ export function parseCsv(input: string): ParseResult {
       const qText = cell(r, qi)
       if (!qText) return
       const q = blank(parseType(cell(r, ti)), qText, cell(r, ei))
-      if (q.type === 'choice' && ci < 0) errors.push(`Řádek ${idx + 2}: chybí sloupec "correct" se správnými písmeny.`)
+      if (q.type === 'choice' && ci < 0) warnings.push(`Řádek ${idx + 2}: chybí sloupec "correct" se správnými písmeny.`)
       const tokens = cell(r, ci).toUpperCase().split(/[\s,;|+]+/).filter(Boolean)
       const correctIdx = new Set(tokens.map((t) => (/^[A-Z]$/.test(t) ? t.charCodeAt(0) - 64 : Number(t))))
-      answerCols.forEach((col, k) => addCell(q, cell(r, col), correctIdx.has(k + 1)))
+      const cells = answerCols.map((col) => cell(r, col))
+      if (q.type === 'match' && correctIdx.size > 0 && !cells.some((c) => c.includes(PAIR_SEP))) {
+        q.type = 'choice'
+        warnings.push(`Otázka ${questions.length + 1}: typ „${cell(r, ti)}“ bez dvojic, ale s vyplněným correct – importuje se jako výběr odpovědi.`)
+      }
+      cells.forEach((c, k) => addCell(q, c, correctIdx.has(k + 1)))
       questions.push(q)
     })
   }
 
-  validate(questions, errors, warnings)
-  return { questions, errors, warnings }
+  const skipped: string[] = []
+  const valid = validate(questions, warnings, skipped)
+  return { questions: valid, errors, warnings, skipped }
 }
 
 export function parseAuto(input: string, filename?: string): ParseResult {
