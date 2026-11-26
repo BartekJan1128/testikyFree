@@ -266,9 +266,7 @@ export default function TakeTest() {
                     {on && q.multiple ? <Check className="size-4" strokeWidth={3} /> : LETTERS[i]}
                   </span>
                   <span className="min-w-0 pt-0.5 leading-relaxed">
-                    <span className="hl hl-anim" data-on={on}>
-                      <RichText as="span" text={a.text} />
-                    </span>
+                    <RichText as="span" text={a.text} className={cn(on && 'font-medium')} />
                   </span>
                 </button>
               )
