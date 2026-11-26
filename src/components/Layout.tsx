@@ -23,19 +23,15 @@ function initials(name: string) {
 
 const navCls = ({ isActive }: { isActive: boolean }) =>
   cn(
-    'relative rounded-md px-3 py-1.5 text-sm font-medium whitespace-nowrap transition-colors',
-    isActive ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
+    'relative flex h-full items-center px-3 text-sm font-medium whitespace-nowrap transition-colors',
+    "after:absolute after:inset-x-3 after:bottom-0 after:h-0.5 after:rounded-full after:bg-primary after:content-['']",
+    isActive ? 'text-foreground after:opacity-100' : 'text-muted-foreground after:opacity-0 hover:text-foreground',
   )
 
 function NavItem({ to, end, children }: { to: string; end?: boolean; children: ReactNode }) {
   return (
     <NavLink to={to} end={end} className={navCls}>
-      {({ isActive }) => (
-        <>
-          {children}
-          {isActive && <span className="absolute inset-x-3 -bottom-[13px] h-0.5 rounded-full bg-primary" />}
-        </>
-      )}
+      {children}
     </NavLink>
   )
 }
@@ -46,11 +42,11 @@ export default function Layout({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-screen">
       <header className="sticky top-0 z-30 border-b bg-background/85 backdrop-blur-md">
-        <div className="mx-auto flex h-[52px] max-w-6xl items-center gap-6 px-4 sm:px-6">
-          <Link to="/" className="shrink-0">
-            <Logo />
+        <div className="mx-auto flex h-14 max-w-6xl items-center gap-3 px-4 sm:gap-6 sm:px-6">
+          <Link to="/" className="flex shrink-0 items-center">
+            <Logo compact />
           </Link>
-          <nav className="-mx-1 flex flex-1 items-center gap-0.5 overflow-x-auto">
+          <nav className="flex h-full min-w-0 flex-1 items-stretch overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             <NavItem to="/" end>Testy</NavItem>
             <NavItem to="/history">Historie</NavItem>
             {profile?.is_admin && <NavItem to="/admin">Administrace</NavItem>}
