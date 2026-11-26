@@ -296,12 +296,12 @@ export default function TakeTest() {
           </div>
         </section>
 
-        <aside className="rounded-2xl border bg-card p-5 lg:sticky lg:top-[76px]">
-          <div className="mb-3 flex items-baseline justify-between">
+        <aside className="flex flex-col rounded-2xl border bg-card p-5 lg:sticky lg:top-[76px] lg:max-h-[calc(100dvh-230px)]">
+          <div className="mb-3 flex shrink-0 items-baseline justify-between">
             <h3 className="font-semibold">Přehled</h3>
             <span className="text-sm text-muted-foreground tabular-nums">{answeredCount} / {total}</span>
           </div>
-          <div className="-mr-2 grid max-h-[calc(100vh-250px)] min-h-40 grid-cols-[repeat(auto-fill,minmax(36px,1fr))] gap-1.5 overflow-y-auto py-1 pr-2 pl-1">
+          <div className="-mr-2 grid min-h-0 flex-1 auto-rows-max grid-cols-[repeat(auto-fill,minmax(36px,1fr))] gap-1.5 overflow-y-auto py-1 pr-2 pl-1">
             {progress.order.map((qid, i) => {
               const answered = isAnswered(qid)
               const current = i === progress.idx
@@ -322,7 +322,7 @@ export default function TakeTest() {
               )
             })}
           </div>
-          <p className="mt-4 text-xs leading-relaxed text-muted-foreground">
+          <p className="mt-4 shrink-0 text-xs leading-relaxed text-muted-foreground">
             Odpovědi se průběžně ukládají v tomhle prohlížeči, takže test můžeš zavřít a dokončit později.
           </p>
         </aside>
