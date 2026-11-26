@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
-import { Play } from 'lucide-react'
+import { ChevronDown, Download, FileJson, FileSpreadsheet, Play } from 'lucide-react'
+import { toast } from 'sonner'
+import { downloadFile, exportCsv, exportJson, fileSlug } from '@/lib/exporter'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { supabase } from '@/lib/supabase'
 import type { Question, Test } from '@/lib/types'
 import { errMsg } from '@/lib/format'
@@ -60,7 +69,39 @@ export default function AdminTestDetail() {
           </span>
         }
         description={test.description || undefined}
-        actions={<Button variant="outline" asChild><Link to={`/test/${test.id}`}><Play /> Vyzkoušet</Link></Button>}
+        actions={
+          <>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" disabled={questions.length === 0}>
+                  <Download /> Exportovat <ChevronDown />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-64">
+                <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+                  {questions.length} otázek ve formátu importu
+                </DropdownMenuLabel>
+                <DropdownMenuItem
+                  onSelect={() => {
+                    downloadFile(`${fileSlug(test.title)}.csv`, exportCsv(questions), 'text/csv')
+                    toast.success('CSV staženo')
+                  }}
+                >
+                  <FileSpreadsheet /> CSV (Excel)
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onSelect={() => {
+                    downloadFile(`${fileSlug(test.title)}.json`, exportJson(questions), 'application/json')
+                    toast.success('JSON stažen')
+                  }}
+                >
+                  <FileJson /> JSON
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <Button variant="outline" asChild><Link to={`/test/${test.id}`}><Play /> Vyzkoušet</Link></Button>
+          </>
+        }
       />
       <ErrorAlert error={error} className="mb-6" />
 
